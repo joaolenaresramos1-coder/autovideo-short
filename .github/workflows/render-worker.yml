@@ -1,0 +1,54 @@
+# Render worker: downloads/slices pages, renders with FFmpeg and validates.
+# Started by the Supabase scheduler (repository_dispatch) and, as a fallback,
+# once an hour (scheduled runs are skipped — no runner, no minutes — until the
+# repository variable VITE_SUPABASE_URL exists). Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+# TOKEN_ENCRYPTION_KEY (same value as in Supabase). Optional: GEMINI_API_KEY.
+name: Render worker
+
+on:
+  repository_dispatch:
+    types: [render-worker]
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: render-worker
+  cancel-in-progress: false
+
+jobs:
+  work:
+    if: github.event_name != 'schedule' || vars.VITE_SUPABASE_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Verificar configuração
+        id: cfg
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          if [ -z "$URL" ]; then echo "::notice::Worker não configurado (SUPABASE_URL ausente)"; echo "skip=1" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.skip != '1'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.skip != '1'
+        with:
+          node-version: 22
+          cache: npm
+      - name: FFmpeg e fontes
+        if: steps.cfg.outputs.skip != '1'
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+          mkdir -p worker/fonts
+          curl -fsSL -o worker/fonts/Anton-Regular.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf || echo "::warning::fonte Anton indisponível, usando padrão"
+      - run: npm ci --omit=dev
+        if: steps.cfg.outputs.skip != '1'
+      - name: Processar fila
+        if: steps.cfg.outputs.skip != '1'
+        run: node worker/main.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WORKER_BUDGET_MINUTES: "45"
