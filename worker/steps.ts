@@ -22,7 +22,7 @@ import { type Ctx, ensureAllowed, geminiFor, jobPath, trackGemini } from "../sup
 import type { StepHandler, StepOutcome } from "../supabase/functions/_shared/pipeline/runner.ts";
 import { browserAvailable, browserPages } from "./browser.ts";
 import { decodeErrors, ffprobe, imageSize, lumaStdDev, run, speechIntervals } from "./ffmpeg.ts";
-import { expandUpload, naturalCompare } from "./files.ts";
+import { expandUpload, naturalCompare, videoSubtitles } from "./files.ts";
 
 const MAX_PANELS = 120;
 const MAX_PAGES = 150;
@@ -147,6 +147,17 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
     const raw = join(dir, `src-${String(i).padStart(3, "0")}.${ext}`);
     await writeFile(raw, await sources[i].load());
     const pageFiles = await expandUpload(raw, sources[i].kind, join(dir, `x-${i}`), MAX_PAGES - pageNo);
+    if (sources[i].kind === "video") {
+      // the episode's own subtitles help the script (dialogue, names)
+      const srt = await videoSubtitles(raw, join(dir, `sub-${i}`)).catch(() => null);
+      if (srt) {
+        const path = jobPath(job, `texts/legendas-${i + 1}.srt`);
+        const bytes = await readFile(srt);
+        await ctx.blobs.put(path, bytes, "application/x-subrip");
+        await ctx.repo.registerObject(job.user_id, job.id, path, "upload", bytes.length, "application/x-subrip");
+        texts.push({ path, name: `legendas do vídeo ${i + 1}.srt` });
+      }
+    }
     for (const file of pageFiles) {
       if (panels.length >= MAX_PANELS || pageNo >= MAX_PAGES) break;
       pageNo++;
@@ -167,7 +178,7 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
     }
   }
   if (panels.length === 0 && texts.length === 0) {
-    throw new StepError("Não encontrei páginas legíveis nos arquivos enviados. Envie imagens, PDF ou ZIP/CBZ com as páginas.", "permanent");
+    throw new StepError("Não encontrei páginas legíveis nos arquivos enviados. Envie imagens, PDF, ZIP/CBZ ou vídeo.", "permanent");
   }
   await ctx.repo.updateChapter(chapter.id, { page_count: pageNo });
   const output: FetchOutput = { panels, texts };

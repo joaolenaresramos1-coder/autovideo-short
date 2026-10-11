@@ -15,7 +15,7 @@ import type { Chapter, Job, Panel, Script, UserSettings, Work } from "../core/ty
 import { imagePart, inferCapabilities, type Part } from "../adapters/gemini.ts";
 import { connectorFor } from "../connectors/index.ts";
 import {
-  type Ctx, dispatchWorker, ensureAllowed, geminiFor, jobPath, remainingMs, trackGemini,
+  type Ctx, ensureAllowed, geminiFor, jobPath, remainingMs, trackGemini,
 } from "./context.ts";
 import type { StepOutcome } from "./runner.ts";
 
@@ -101,7 +101,6 @@ export async function discover(ctx: Ctx, job: Job): Promise<StepOutcome> {
     throw new StepError("Capítulo já em produção por outra tarefa", "retryable", 60);
   }
   await ctx.repo.updateChapter(chapter.id, { status: "processing" });
-  await dispatchWorker(ctx, `fetch ${job.id}`);
   return { next: "fetching", output: { chapter_id: chapter.id, chapter_key: chapter.chapter_key } };
 }
 
@@ -357,7 +356,6 @@ export async function generateAudio(ctx: Ctx, job: Job): Promise<StepOutcome> {
   if (!script) throw new StepError("Roteiro ausente", "permanent");
   const prev = (await ctx.repo.getStep(job.id, "audio_generating"))?.output as (Partial<AudioOutput> & { rewritten?: boolean }) | undefined;
   if (prev?.path && prev.object_id && (await ctx.repo.objectsForJob(job.id, ["audio"])).some((o) => o.id === prev.object_id)) {
-    await dispatchWorker(ctx, `render ${job.id}`);
     return { next: "rendering", output: prev };
   }
 
@@ -403,7 +401,6 @@ export async function generateAudio(ctx: Ctx, job: Job): Promise<StepOutcome> {
   });
   const output: AudioOutput = { path, object_id: obj.id, duration: r.durationSeconds, video_seconds: videoSeconds, tempo, pad_seconds: pad, rewrites };
   await ctx.repo.updateJob(job.id, { render_requested_at: ctx.now().toISOString() });
-  await dispatchWorker(ctx, `render ${job.id}`);
   return { next: "rendering", output };
 }
 

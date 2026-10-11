@@ -249,6 +249,8 @@ describe("upload types", async () => {
     expect(uploadKind("", "IMG_0001.HEIC")).toBe("image");
     expect(uploadKind("image/gif", "x")).toBe("image");
     expect(uploadKind("", "roteiro.srt")).toBe("text");
+    expect(uploadKind("", "Episodio 05.mkv")).toBe("video");
+    expect(uploadKind("video/mp4", "clip")).toBe("video");
     expect(uploadKind("application/x-msdownload", "virus.exe")).toBeNull();
     expect(uploadContentType("", "cap.cbz")).toBe("application/vnd.comicbook+zip");
     expect(uploadContentType("image/jpeg", "foto.jpg")).toBe("image/jpeg");

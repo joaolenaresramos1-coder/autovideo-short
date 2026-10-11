@@ -7,7 +7,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run, imageSize } from "../../worker/ffmpeg.ts";
-import { expandUpload } from "../../worker/files.ts";
+import { expandUpload, videoSubtitles } from "../../worker/files.ts";
 import { browserAvailable, browserPages } from "../../worker/browser.ts";
 
 async function page(dir: string, name: string, size = "800x1200", src = "testsrc2"): Promise<string> {
@@ -96,6 +96,29 @@ describe("uploaded material", () => {
       const conv = await expandUpload(avif, "image", dir, 150);
       expect(conv[0]).toMatch(/\.png$/);
     }
+  });
+});
+
+describe("uploaded video", () => {
+  it("takes one frame per scene and reads the embedded subtitles", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vid-"));
+    // three 3-second scenes with hard cuts, plus a subtitle track
+    const srt = join(dir, "in.srt");
+    await writeFile(srt, "1\n00:00:00,500 --> 00:00:02,000\nEu vou te proteger!\n\n2\n00:00:04,000 --> 00:00:05,500\nNão fuja!\n");
+    const mkv = join(dir, "ep.mkv");
+    const r = await run("ffmpeg", [
+      "-v", "error", "-y",
+      "-f", "lavfi", "-i", "testsrc2=s=1280x720:d=3", "-f", "lavfi", "-i", "rgbtestsrc=s=1280x720:d=3", "-f", "lavfi", "-i", "smptebars=s=1280x720:d=3",
+      "-i", srt,
+      "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1[v]", "-map", "[v]", "-map", "3:s", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:s", "srt", mkv,
+    ]);
+    expect(r.stderr).toBe("");
+    const frames = await expandUpload(mkv, "video", join(dir, "out"), 150);
+    expect(frames.length).toBeGreaterThanOrEqual(3);
+    expect(frames.length).toBeLessThanOrEqual(80);
+    expect((await imageSize(frames[0])).width).toBeLessThanOrEqual(1080);
+    const subs = await videoSubtitles(mkv, join(dir, "subs"));
+    expect(subs && (await readFile(subs, "utf8"))).toContain("Eu vou te proteger!");
   });
 });
 

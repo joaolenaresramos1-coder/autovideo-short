@@ -1,8 +1,8 @@
 // File types accepted for a chapter: page images, PDFs, comic archives
-// (ZIP/CBZ/RAR/CBR/7Z) and text (script, subtitles). Shared by the API,
+// (ZIP/CBZ/RAR/CBR/7Z), videos (anime episodes, clips) and text (script, subtitles). Shared by the API,
 // the panel and the worker so all three agree.
 
-export type UploadKind = "image" | "pdf" | "archive" | "text";
+export type UploadKind = "image" | "pdf" | "archive" | "video" | "text";
 
 /** 50 MB: the Supabase Free per-file upload limit. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -27,6 +27,14 @@ const BY_EXT: Record<string, { kind: UploadKind; type: string }> = {
   cbr: { kind: "archive", type: "application/vnd.comicbook-rar" },
   "7z": { kind: "archive", type: "application/x-7z-compressed" },
   cb7: { kind: "archive", type: "application/x-7z-compressed" },
+  mp4: { kind: "video", type: "video/mp4" },
+  m4v: { kind: "video", type: "video/mp4" },
+  mkv: { kind: "video", type: "video/x-matroska" },
+  webm: { kind: "video", type: "video/webm" },
+  mov: { kind: "video", type: "video/quicktime" },
+  avi: { kind: "video", type: "video/x-msvideo" },
+  ts: { kind: "video", type: "video/mp2t" },
+  "3gp": { kind: "video", type: "video/3gpp" },
   txt: { kind: "text", type: "text/plain" },
   srt: { kind: "text", type: "application/x-subrip" },
   vtt: { kind: "text", type: "text/vtt" },
@@ -45,6 +53,7 @@ export function uploadKind(contentType: string | null | undefined, name: string)
   const ct = (contentType ?? "").toLowerCase();
   if (ct.startsWith("image/")) return "image";
   if (ct === "application/pdf") return "pdf";
+  if (ct.startsWith("video/")) return "video";
   if (ARCHIVE_TYPES.test(ct)) return "archive";
   if (ct.startsWith("text/") || ct.includes("subrip")) return "text";
   return null;
@@ -58,5 +67,5 @@ export function uploadContentType(contentType: string | null | undefined, name: 
 }
 
 /** For <input accept>. */
-export const UPLOAD_ACCEPT = "image/*,application/pdf,.pdf,.zip,.cbz,.rar,.cbr,.7z,.cb7,.heic,.heif,.txt,.srt,.vtt";
-export const UPLOAD_HINT = "Imagens (JPG, PNG, WebP, GIF, HEIC…), PDF, ZIP/CBZ/RAR/CBR ou texto (TXT, SRT, VTT). Até 50 MB cada.";
+export const UPLOAD_ACCEPT = "image/*,video/*,application/pdf,.pdf,.mkv,.zip,.cbz,.rar,.cbr,.7z,.cb7,.heic,.heif,.txt,.srt,.vtt";
+export const UPLOAD_HINT = "Imagens (JPG, PNG, WebP, GIF, HEIC…), PDF, ZIP/CBZ/RAR/CBR, vídeo (MP4, MKV, WebM, MOV) ou texto (TXT, SRT, VTT). Até 50 MB cada.";
