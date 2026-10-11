@@ -32,6 +32,20 @@ export const WORK_DIR = process.env.WORKER_TMP ?? join(tmpdir(), "autovideo-work
 export const FONTS_DIR = process.env.FONTS_DIR ?? new URL("./fonts/", import.meta.url).pathname;
 export const MUSIC_FILE = process.env.MUSIC_FILE ?? new URL("./assets/music.mp3", import.meta.url).pathname;
 
+/** Runs fn over items with at most `size` in flight; results keep the input order. */
+async function pool<T, R>(items: T[], size: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(lanes);
+  return out;
+}
+
 async function jobDir(job: Job): Promise<string> {
   const d = join(WORK_DIR, job.id);
   await mkdir(d, { recursive: true });
@@ -99,10 +113,12 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
     if (chapter.source_url && (work.source === "link" || work.source === "upload" || work.source === "manual" || !connector.pageRefs)) {
       try {
         refs = await linkPageRefs(chapter.source_url, ctx.fetch);
+        console.log(`[fetching ${job.id}] ${refs.length} página(s) encontradas no HTML do link`);
       } catch (e) {
         if (!(e instanceof StepError) || e.message !== NO_PAGES_MESSAGE || !browserAvailable()) throw e;
         // the site draws the pages with JavaScript: open it in a real browser
         const pages = await browserPages(chapter.source_url);
+        console.log(`[fetching ${job.id}] navegador: ${pages.length} página(s)`);
         if (pages.length < 2) throw e;
         for (const p of pages) sources.push({ name: p.name, kind: "image", load: async () => p.bytes });
       }
@@ -140,16 +156,19 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
   }
   if (sources.length === 0 && texts.length === 0) throw new StepError("Nenhum material disponível para o capítulo", "permanent");
 
-  const panels: Panel[] = [];
-  let pageNo = 0;
-  for (let i = 0; i < sources.length && panels.length < MAX_PANELS; i++) {
-    const ext = extOf(sources[i].name) || "jpg";
-    const raw = join(dir, `src-${String(i).padStart(3, "0")}.${ext}`);
-    await writeFile(raw, await sources[i].load());
-    const pageFiles = await expandUpload(raw, sources[i].kind, join(dir, `x-${i}`), MAX_PAGES - pageNo);
+  // Download everything in parallel, then turn files into page images in order.
+  const t0 = Date.now();
+  const raws = await pool(sources, 6, async (src, i) => {
+    const raw = join(dir, `src-${String(i).padStart(3, "0")}.${extOf(src.name) || "jpg"}`);
+    await writeFile(raw, await src.load());
+    return raw;
+  });
+  const pageFiles: string[] = [];
+  for (let i = 0; i < sources.length && pageFiles.length < MAX_PAGES; i++) {
+    pageFiles.push(...(await expandUpload(raws[i], sources[i].kind, join(dir, `x-${i}`), MAX_PAGES - pageFiles.length)));
     if (sources[i].kind === "video") {
       // the episode's own subtitles help the script (dialogue, names)
-      const srt = await videoSubtitles(raw, join(dir, `sub-${i}`)).catch(() => null);
+      const srt = await videoSubtitles(raws[i], join(dir, `sub-${i}`)).catch(() => null);
       if (srt) {
         const path = jobPath(job, `texts/legendas-${i + 1}.srt`);
         const bytes = await readFile(srt);
@@ -158,25 +177,27 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
         texts.push({ path, name: `legendas do vídeo ${i + 1}.srt` });
       }
     }
-    for (const file of pageFiles) {
-      if (panels.length >= MAX_PANELS || pageNo >= MAX_PAGES) break;
-      pageNo++;
-      let slices: Awaited<ReturnType<typeof slicePage>>;
-      try {
-        slices = await slicePage(file, dir, pageNo);
-      } catch {
-        continue; // unreadable image inside an archive: skip it
-      }
-      for (const p of slices) {
-        if (panels.length >= MAX_PANELS) break;
-        const path = jobPath(job, `panels/${p.id}.jpg`);
-        const bytes = await readFile(p.file);
-        await ctx.blobs.put(path, bytes, "image/jpeg");
-        await ctx.repo.registerObject(job.user_id, job.id, path, "image", bytes.length, "image/jpeg");
-        panels.push({ id: p.id, path, width: p.width, height: p.height, page: pageNo });
-      }
-    }
   }
+  const pageNo = Math.min(pageFiles.length, MAX_PAGES);
+  console.log(`[fetching ${job.id}] ${sources.length} arquivo(s) → ${pageNo} página(s) em ${Math.round((Date.now() - t0) / 1000)}s`);
+
+  // Slice pages into panels (parallel), keeping reading order.
+  const sliced = await pool(pageFiles.slice(0, MAX_PAGES), 4, async (file, i) => {
+    try {
+      return await slicePage(file, dir, i + 1);
+    } catch {
+      return []; // unreadable image inside an archive: skip it
+    }
+  });
+  const chosen = sliced.flatMap((slices, i) => slices.map((p) => ({ ...p, page: i + 1 }))).slice(0, MAX_PANELS);
+  const panels: Panel[] = await pool(chosen, 6, async (p) => {
+    const path = jobPath(job, `panels/${p.id}.jpg`);
+    const bytes = await readFile(p.file);
+    await ctx.blobs.put(path, bytes, "image/jpeg");
+    await ctx.repo.registerObject(job.user_id, job.id, path, "image", bytes.length, "image/jpeg");
+    return { id: p.id, path, width: p.width, height: p.height, page: p.page };
+  });
+  console.log(`[fetching ${job.id}] ${panels.length} quadro(s) prontos em ${Math.round((Date.now() - t0) / 1000)}s`);
   if (panels.length === 0 && texts.length === 0) {
     throw new StepError("Não encontrei páginas legíveis nos arquivos enviados. Envie imagens, PDF, ZIP/CBZ ou vídeo.", "permanent");
   }
@@ -333,8 +354,23 @@ export async function validate(ctx: Ctx, job: Job): Promise<StepOutcome> {
   return { next: "ready_to_publish", output: { report, object_id: obj.id } };
 }
 
+function timed(name: string, fn: StepHandler): StepHandler {
+  return async (ctx, job) => {
+    const t0 = Date.now();
+    console.log(`[${name} ${job.id}] início`);
+    try {
+      const r = await fn(ctx, job);
+      console.log(`[${name} ${job.id}] ok em ${Math.round((Date.now() - t0) / 1000)}s`);
+      return r;
+    } catch (e) {
+      console.log(`[${name} ${job.id}] erro em ${Math.round((Date.now() - t0) / 1000)}s: ${(e as Error).message.slice(0, 300)}`);
+      throw e;
+    }
+  };
+}
+
 export const WORKER_HANDLERS: Record<string, StepHandler> = {
-  fetching: fetchMaterial,
-  rendering: render,
-  validating: validate,
+  fetching: timed("fetching", fetchMaterial),
+  rendering: timed("rendering", render),
+  validating: timed("validating", validate),
 };
