@@ -1,0 +1,63 @@
+# Applies migrations and deploys the Edge Functions + their secrets.
+# Repository secrets required: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF,
+# SUPABASE_DB_PASSWORD, TOKEN_ENCRYPTION_KEY, CRON_SECRET.
+# Optional: GEMINI_API_KEY, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET,
+# TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, GH_DISPATCH_TOKEN.
+# Repository variable: APP_URL (address of the site).
+name: Deploy Supabase
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["supabase/**", ".github/workflows/deploy-supabase.yml"]
+
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Verificar secrets obrigatórios
+        run: |
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PROJECT_REF; do
+            if [ -z "${!v}" ]; then echo "::error::Secret ausente: $v (veja docs/IMPLANTACAO.md)"; exit 1; fi
+          done
+      - run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Aplicar migrações
+        run: supabase db push --password "$SUPABASE_DB_PASSWORD"
+      - name: Secrets das Edge Functions
+        env:
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          GITHUB_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+          APP_URL: ${{ vars.APP_URL }}
+          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+        run: |
+          : > .env.functions
+          for v in TOKEN_ENCRYPTION_KEY CRON_SECRET GEMINI_API_KEY YOUTUBE_CLIENT_ID YOUTUBE_CLIENT_SECRET TIKTOK_CLIENT_KEY TIKTOK_CLIENT_SECRET GITHUB_DISPATCH_TOKEN APP_URL; do
+            if [ -n "${!v}" ]; then echo "$v=${!v}" >> .env.functions; else echo "::warning::$v não definido (integração correspondente ficará pendente)"; fi
+          done
+          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY_NAME" >> .env.functions
+          supabase secrets set --env-file .env.functions --project-ref "$PROJECT_REF"
+          rm .env.functions
+      - name: Publicar Edge Functions
+        run: |
+          for f in tick cleanup oauth api; do
+            supabase functions deploy "$f" --no-verify-jwt --project-ref "$PROJECT_REF"
+          done
