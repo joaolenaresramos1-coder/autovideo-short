@@ -49,6 +49,33 @@ export function extractImageUrls(html: string, pageUrl: string): string[] {
   return out;
 }
 
+const IMAGE_URL = /(?:https?:)?(?:\\?\/){2}[^\s"'<>()]+?\.(?:jpe?g|png|webp|avif)(?:\?[^\s"'<>\\]*)?/gi;
+
+/**
+ * Many readers keep the page list inside a script (JSON or a JS array) and
+ * draw the <img> tags later. Collect image addresses from the raw HTML,
+ * in order, as a fallback.
+ */
+export function extractScriptImageUrls(html: string, pageUrl: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of html.matchAll(IMAGE_URL)) {
+    let raw = m[0].replace(/\\\//g, "/").replace(/&amp;/g, "&");
+    if (raw.startsWith("//")) raw = `https:${raw}`;
+    let abs: string;
+    try {
+      abs = new URL(raw, pageUrl).href;
+    } catch {
+      continue;
+    }
+    if (JUNK.test(abs) || seen.has(abs)) continue;
+    seen.add(abs);
+    out.push(abs);
+    if (out.length >= MAX_IMAGES) break;
+  }
+  return out;
+}
+
 async function mangadexRefs(chapterId: string, fetchFn: FetchLike): Promise<PageRef[]> {
   const r = await httpJson<{ baseUrl: string; chapter: { hash: string; data: string[]; dataSaver: string[] } }>(
     fetchFn,
@@ -65,6 +92,9 @@ async function mangadexRefs(chapterId: string, fetchFn: FetchLike): Promise<Page
   }));
 }
 
+export const NO_PAGES_MESSAGE =
+  "Não encontrei as páginas nesse link (o site pode carregar as imagens por JavaScript ou bloquear leitura automática). Envie as imagens do capítulo pelo botão de arquivos.";
+
 export async function linkPageRefs(url: string, fetchFn: FetchLike): Promise<PageRef[]> {
   const md = isMangadexChapter(url);
   if (md) return mangadexRefs(md, fetchFn);
@@ -78,12 +108,13 @@ export async function linkPageRefs(url: string, fetchFn: FetchLike): Promise<Pag
     "Link do capítulo",
   );
   const html = await res.text();
-  const urls = extractImageUrls(html, res.url || url);
+  let urls = extractImageUrls(html, res.url || url);
+  if (urls.length < 3) {
+    const fromScripts = extractScriptImageUrls(html, res.url || url);
+    if (fromScripts.length > urls.length) urls = fromScripts;
+  }
   if (urls.length < 2) {
-    throw new StepError(
-      "Não encontrei as páginas nesse link (o site pode carregar as imagens por JavaScript ou bloquear leitura automática). Envie as imagens do capítulo pelo botão de arquivos.",
-      "permanent",
-    );
+    throw new StepError(NO_PAGES_MESSAGE, "permanent");
   }
   const origin = new URL(url).origin;
   return urls.map((u, i) => ({

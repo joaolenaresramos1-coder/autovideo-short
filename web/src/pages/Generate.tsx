@@ -4,6 +4,7 @@ import { api, supabase } from "../supabase.ts";
 import { rows, useQuery, useToast } from "../hooks.ts";
 import { Card, ErrorBox, Field, Page, Tabs, Toast } from "../ui.tsx";
 import type { Platform } from "../../../supabase/functions/_shared/core/types.ts";
+import { MAX_UPLOAD_BYTES, UPLOAD_ACCEPT, UPLOAD_HINT, uploadContentType, uploadKind } from "../../../supabase/functions/_shared/core/uploads.ts";
 
 /** Manual generation: one chapter, by link or by files, produced right away. */
 export default function Generate() {
@@ -28,7 +29,7 @@ export default function Generate() {
     e.preventDefault();
     setError(null);
     if (mode === "link" && !/^https?:\/\//i.test(url.trim())) return setError("Cole o link completo do capítulo (começando com https://).");
-    if (mode === "files" && files.length === 0) return setError("Escolha as imagens do capítulo.");
+    if (mode === "files" && files.length === 0) return setError("Escolha os arquivos do capítulo.");
     const base = { work_id: workId || undefined, title: workId ? undefined : title || undefined, type, chapter_key: chapter || undefined };
     try {
       let target = base;
@@ -40,7 +41,9 @@ export default function Generate() {
         for (let i = 0; i < sorted.length; i++) {
           const f = sorted[i];
           setProgress(`Enviando ${i + 1}/${sorted.length}…`);
-          const ct = f.type || (f.name.endsWith(".srt") ? "application/x-subrip" : f.name.endsWith(".vtt") ? "text/vtt" : "text/plain");
+          if (!uploadKind(f.type, f.name)) throw new Error(`Tipo de arquivo não aceito: ${f.name}. ${UPLOAD_HINT}`);
+          if (f.size > MAX_UPLOAD_BYTES) throw new Error(`${f.name} tem mais de 50 MB. Divida em partes menores.`);
+          const ct = uploadContentType(f.type, f.name);
           const r = await api<{ path: string; token: string }>("upload_url", {
             work_id: prep.work_id, chapter_key: prep.chapter_key, filename: f.name, content_type: ct, size: f.size, order: i + 1,
           });
@@ -70,14 +73,14 @@ export default function Generate() {
       <form className="stack" onSubmit={submit}>
         <Card>
           <div className="stack">
-            <Tabs value={mode} onChange={setMode} options={[{ value: "link", label: "Link do capítulo" }, { value: "files", label: "Enviar imagens" }]} />
+            <Tabs value={mode} onChange={setMode} options={[{ value: "link", label: "Link do capítulo" }, { value: "files", label: "Enviar arquivos" }]} />
             {mode === "link" ? (
               <Field label="Link do capítulo" hint="Cole o endereço da página do capítulo (onde as imagens aparecem). Links do MangaDex também funcionam.">
                 <input type="url" inputMode="url" autoComplete="off" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/capitulo-12" />
               </Field>
             ) : (
-              <Field label="Imagens do capítulo" hint="Na ordem de leitura (o nome do arquivo define a ordem). JPEG, PNG ou WebP, até 15 MB cada. Também aceita legendas TXT/SRT/VTT.">
-                <input type="file" multiple accept="image/jpeg,image/png,image/webp,.txt,.srt,.vtt" onChange={(e) => setFiles([...(e.target.files ?? [])])} />
+              <Field label="Arquivos do capítulo" hint={`Na ordem de leitura (o nome do arquivo define a ordem). ${UPLOAD_HINT}`}>
+                <input type="file" multiple accept={UPLOAD_ACCEPT} onChange={(e) => setFiles([...(e.target.files ?? [])])} />
               </Field>
             )}
           </div>

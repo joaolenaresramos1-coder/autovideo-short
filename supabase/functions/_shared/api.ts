@@ -2,6 +2,7 @@
 // the browser never receives secrets, only short-lived signed URLs.
 
 import { StepError } from "./core/backoff.ts";
+import { MAX_UPLOAD_BYTES, UPLOAD_HINT, uploadContentType, uploadKind } from "./core/uploads.ts";
 import { randomToken, redact } from "./core/crypto.ts";
 import { chapterNumberFrom } from "./connectors/types.ts";
 import { connectorFor } from "./connectors/index.ts";
@@ -32,15 +33,6 @@ function uuid(b: Body, k: string): string {
   return v;
 }
 
-const UPLOAD_TYPES: Record<string, string> = {
-  "image/jpeg": "image",
-  "image/png": "image",
-  "image/webp": "image",
-  "text/plain": "text",
-  "application/x-subrip": "text",
-  "text/vtt": "text",
-};
-const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 function safeName(name: string): string {
   return name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80) || "arquivo";
@@ -186,16 +178,18 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
       if (!work || work.user_id !== userId) throw new ApiError("Obra não encontrada", 404);
       const chapterKey = str(body, "chapter_key", 40).replace(/[^\p{L}\p{N}._-]/gu, "");
       if (!chapterKey) throw new ApiError("Capítulo inválido");
-      const contentType = str(body, "content_type", 60).toLowerCase();
-      if (!UPLOAD_TYPES[contentType]) throw new ApiError("Tipo de arquivo não aceito (JPEG, PNG, WebP, TXT, SRT ou VTT)");
+      const filename = str(body, "filename", 200);
+      const rawType = typeof body.content_type === "string" ? body.content_type.slice(0, 100) : "";
+      if (!uploadKind(rawType, filename)) throw new ApiError(`Tipo de arquivo não aceito: ${filename}. ${UPLOAD_HINT}`);
+      const contentType = uploadContentType(rawType, filename);
       const size = Number(body.size);
-      if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) throw new ApiError("Arquivo vazio ou maior que 15 MB");
+      if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) throw new ApiError(`${filename}: arquivo vazio ou maior que 50 MB`);
       const order = String(Number(body.order ?? 0)).padStart(3, "0");
-      const path = `uploads/${userId}/${workId}/${chapterKey}/${order}-${safeName(str(body, "filename", 200))}`;
+      const path = `uploads/${userId}/${workId}/${chapterKey}/${order}-${safeName(filename)}`;
       await repo.upsertChapterForUpload(userId, workId, chapterKey, chapterNumberFrom(`cap ${chapterKey}`));
       const signed = await ctx.blobs.signedUploadUrl(path);
       await repo.registerObject(userId, null, path, "upload", size, contentType, true);
-      return { path, ...signed };
+      return { path, content_type: contentType, ...signed };
     }
     case "prepare_chapter": {
       // Where uploaded files of a one-off chapter go (creates the work if needed).

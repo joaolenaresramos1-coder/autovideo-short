@@ -5,6 +5,7 @@ import { rows, useQuery, useToast } from "../hooks.ts";
 import { Badge, Card, Empty, ErrorBox, Field, fmtDate, Loading, Page, Tabs, Toast } from "../ui.tsx";
 import { STATUS, TYPE_LABEL } from "./Works.tsx";
 import type { Certainty, MemoryKind, Work } from "../../../supabase/functions/_shared/core/types.ts";
+import { UPLOAD_ACCEPT, UPLOAD_HINT, uploadContentType } from "../../../supabase/functions/_shared/core/uploads.ts";
 
 interface ChapterRow {
   id: string;
@@ -226,7 +227,7 @@ function Upload({ work, onDone, onError }: { work: Work; onDone: () => void; onE
       for (let i = 0; i < sorted.length; i++) {
         const f = sorted[i];
         setProgress(`Enviando ${i + 1}/${sorted.length}: ${f.name}`);
-        const type = f.type || (f.name.endsWith(".srt") ? "application/x-subrip" : f.name.endsWith(".vtt") ? "text/vtt" : "text/plain");
+        const type = uploadContentType(f.type, f.name);
         const r = await api<{ path: string; token: string }>("upload_url", {
           work_id: work.id, chapter_key: chapter, filename: f.name, content_type: type, size: f.size, order: i + 1,
         });
@@ -246,8 +247,8 @@ function Upload({ work, onDone, onError }: { work: Work; onDone: () => void; onE
     <Card title="Enviar material do capítulo">
       <form className="stack" onSubmit={send}>
         <Field label="Capítulo / episódio" hint="Ex.: 12 ou 12.5"><input required value={chapter} onChange={(e) => setChapter(e.target.value)} inputMode="decimal" /></Field>
-        <Field label="Arquivos" hint="Páginas (JPEG, PNG, WebP) na ordem de leitura, ou legendas/roteiro (TXT, SRT, VTT). Até 15 MB cada. Ficam no servidor apenas temporariamente.">
-          <input type="file" multiple accept="image/jpeg,image/png,image/webp,.txt,.srt,.vtt" onChange={(e) => setFiles([...(e.target.files ?? [])])} />
+        <Field label="Arquivos" hint={`Páginas na ordem de leitura (o nome do arquivo define a ordem). ${UPLOAD_HINT} Ficam no servidor apenas temporariamente.`}>
+          <input type="file" multiple accept={UPLOAD_ACCEPT} onChange={(e) => setFiles([...(e.target.files ?? [])])} />
         </Field>
         {progress && <div className="alert info">{progress}</div>}
         <button className="primary" disabled={!files.length || !chapter || !!progress}>Enviar {files.length ? `(${files.length})` : ""}</button>
