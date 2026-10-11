@@ -339,6 +339,22 @@ export class PgRepo implements Repo {
       [userId, workId, key, number],
     ))[0].id;
   }
+  async createWork(row: Record<string, unknown>) {
+    const s = insertSql("works", { status: "active", ...row }, "returning id");
+    return (await this.db.query(s.text, s.values)).rows[0].id as string;
+  }
+  async upsertChapter(userId: string, workId: string, key: string, o: { number: number | null; title?: string | null; sourceUrl?: string | null }) {
+    return (await this.q<{ id: string }>(
+      `insert into chapters (user_id, work_id, chapter_key, number, title, source_url) values ($1,$2,$3,$4,$5,$6)
+       on conflict (work_id, chapter_key) do update set source_url = coalesce(excluded.source_url, chapters.source_url),
+         title = coalesce(excluded.title, chapters.title) returning id`,
+      [userId, workId, key, o.number, o.title ?? null, o.sourceUrl ?? null],
+    ))[0].id;
+  }
+  async createJob(row: NewJob & { state: string; chapter_id: string | null; content_key: string | null }) {
+    const s = insertSql("jobs", row as unknown as Record<string, unknown>, "returning id");
+    return (await this.db.query(s.text, s.values)).rows[0].id as string;
+  }
   async putOAuthState(row: Record<string, unknown>) {
     const s = insertSql("oauth_states", row);
     await this.db.query(s.text, s.values);

@@ -99,7 +99,7 @@ export function useSetupStatus() {
   }, [], 60_000);
 }
 
-const REQUIRED: (keyof SetupStatus)[] = ["site", "scheduler", "gemini", "work", "schedule", "worker"];
+const REQUIRED: (keyof SetupStatus)[] = ["site", "scheduler", "gemini", "worker"];
 
 /** Compact checklist card for the dashboard. */
 export function SetupChecklist() {
@@ -111,9 +111,9 @@ export function SetupChecklist() {
     { key: "site", label: "Site ligado ao Supabase" },
     { key: "scheduler", label: "Agendador no servidor (pg_cron) rodando", to: "/implantacao" },
     { key: "gemini", label: "Chave do Gemini salva", to: "/integracoes" },
-    { key: "work", label: "Obra cadastrada", to: "/obras/nova" },
-    { key: "schedule", label: "Calendário configurado", to: "/calendario" },
-    { key: "worker", label: "Worker de renderização já processou um capítulo", to: "/implantacao" },
+    { key: "work", label: "Obra cadastrada", to: "/obras/nova", optional: true },
+    { key: "schedule", label: "Calendário automático configurado", to: "/calendario", optional: true },
+    { key: "worker", label: "Primeiro vídeo processado (use Gerar vídeo)", to: "/gerar" },
     { key: "youtube", label: "YouTube conectado", to: "/integracoes", optional: true },
     { key: "tiktok", label: "TikTok conectado", to: "/integracoes", optional: true },
   ];

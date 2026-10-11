@@ -67,7 +67,7 @@ export default function Dashboard() {
   }
 
   return (
-    <Page title="Painel">
+    <Page title="Painel" actions={<Link className="btn primary" to="/gerar">✚ Gerar vídeo</Link>}>
       <ErrorBox error={q.error} />
       <div style={{ marginBottom: 12 }}><SetupChecklist /></div>
       {d?.settings?.automation_paused && (

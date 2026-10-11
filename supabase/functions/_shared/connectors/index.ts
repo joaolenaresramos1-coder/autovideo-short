@@ -3,7 +3,9 @@ import { mangadex } from "./mangadex.ts";
 import { anilist, manual, rss, upload } from "./others.ts";
 import type { Connector } from "./types.ts";
 
-export const CONNECTORS: Record<Work["source"], Connector> = { mangadex, rss, anilist, upload, manual };
+const link: Connector = { ...upload, id: "link", label: "Links de capítulos enviados por mim" };
+
+export const CONNECTORS: Record<Work["source"], Connector> = { mangadex, rss, anilist, upload, manual, link };
 
 export function connectorFor(work: Pick<Work, "source">): Connector {
   return CONNECTORS[work.source] ?? manual;

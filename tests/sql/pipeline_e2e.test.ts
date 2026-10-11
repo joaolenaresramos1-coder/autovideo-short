@@ -296,3 +296,49 @@ describe("recovery and limits", () => {
     expect(fake.stats.calls.gemini_script).toBe(calls);
   });
 });
+
+describe("manual generation from a chapter link", () => {
+  it("generates a video for a one-off chapter link, without registering a work", { timeout: 900_000 }, async () => {
+    const pages = ["strip", "page"].map((n, i) => {
+      const f = join(dir, `link-${n}.png`);
+      makeImage(f, i === 0 ? "testsrc2" : "mandelbrot", i === 0 ? "720x2400" : "800x1200");
+      return readFileSync(f);
+    });
+    const chapterUrl = "https://scan.example/obra-x/capitulo-7/";
+    fake.routes.set(chapterUrl, () => new Response(
+      `<html><img src="/logo.png"><div class="reader">
+        <img data-src="https://cdn.scan.example/7/01.png" src="data:image/gif;base64,AA">
+        <img src="https://cdn.scan.example/7/02.png"></div></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    ));
+    let referer = "";
+    pages.forEach((bytes, i) => fake.routes.set(`https://cdn.scan.example/7/0${i + 1}.png`, (init) => {
+      referer = new Headers(init.headers).get("referer") ?? "";
+      return new Response(bytes, { status: 200 });
+    }));
+
+    const r = (await handleApi(edge(), user, {
+      action: "generate_now", title: "Capítulo avulso de teste", chapter_url: chapterUrl, target_duration_seconds: 75, platforms: [],
+    })) as { job_id: string; work_id: string; chapter_key: string };
+    expect(r.chapter_key).toBe("7");
+    const work = (await db.admin.query("select standalone, source from works where id = $1", [r.work_id])).rows[0];
+    expect(work).toMatchObject({ standalone: true, source: "link" });
+
+    await runTick(edge());
+    expect((await jobRow(r.job_id)).state).toBe("fetching");
+    await drainQueue(worker(), "worker", WORKER_HANDLERS);
+    expect((await jobRow(r.job_id)).state).toBe("analyzing");
+    expect(referer).toBe("https://scan.example/");
+    await runTick(edge());
+    expect((await jobRow(r.job_id)).state).toBe("rendering");
+    await drainQueue(worker(), "worker", WORKER_HANDLERS);
+    const j = await jobRow(r.job_id);
+    expect(j.state, j.last_error ?? "").toBe("ready_to_publish");
+    const v = (await db.admin.query("select validation from videos where job_id = $1", [r.job_id])).rows[0];
+    expect(v.validation.ok).toBe(true);
+
+    // The same chapter can be generated again manually.
+    const again = (await handleApi(edge(), user, { action: "generate_now", work_id: r.work_id, chapter_key: "7" })) as { job_id: string };
+    expect(again.job_id).not.toBe(r.job_id);
+  });
+});

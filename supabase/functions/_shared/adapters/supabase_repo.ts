@@ -316,6 +316,24 @@ export class SupabaseRepo implements Repo {
     ) as { id: string };
     return r.id;
   }
+  async createWork(row: Record<string, unknown>) {
+    const r = must(await this.db.from("works").insert({ status: "active", ...row }).select("id").single(), "works") as { id: string };
+    return r.id;
+  }
+  async upsertChapter(userId: string, workId: string, key: string, o: { number: number | null; title?: string | null; sourceUrl?: string | null }) {
+    const row: Record<string, unknown> = { user_id: userId, work_id: workId, chapter_key: key, number: o.number };
+    if (o.title !== undefined) row.title = o.title;
+    if (o.sourceUrl !== undefined) row.source_url = o.sourceUrl;
+    const r = must(
+      await this.db.from("chapters").upsert(row, { onConflict: "work_id,chapter_key" }).select("id").single(),
+      "chapters",
+    ) as { id: string };
+    return r.id;
+  }
+  async createJob(row: NewJob & { state: string; chapter_id: string | null; content_key: string | null }) {
+    const r = must(await this.db.from("jobs").insert(row).select("id").single(), "jobs") as { id: string };
+    return r.id;
+  }
   async putOAuthState(row: Record<string, unknown>) {
     must(await this.db.from("oauth_states").insert(row), "oauth_states");
   }

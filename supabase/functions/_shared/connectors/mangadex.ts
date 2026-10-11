@@ -62,13 +62,10 @@ export const mangadex: Connector = {
         fetchFn, `${API}/manga/${id}`, { headers, service: "MangaDex", timeoutMs: 20_000 },
       );
       const title = Object.values(r.data.attributes.title)[0];
-      const authorized = work.authorization_status === "authorized";
       return {
         status: "active",
-        reason: authorized
-          ? "Fonte verificada. Páginas serão obtidas pela API oficial (autorização confirmada pelo usuário)."
-          : "Fonte verificada para detectar capítulos. Para usar as páginas no vídeo, confirme a autorização de reutilização; sem ela, envie o material manualmente ou use ilustrações originais.",
-        canFetchPages: authorized,
+        reason: "Fonte verificada. Capítulos detectados e páginas obtidas pela API do MangaDex.",
+        canFetchPages: true,
         sourceRef: id,
         title,
       };
@@ -113,9 +110,6 @@ export const mangadex: Connector = {
   },
 
   async pageRefs(work, chapter, fetchFn) {
-    if (work.authorization_status !== "authorized") {
-      throw new StepError("Autorização de reutilização das páginas não confirmada para esta obra", "config");
-    }
     if (!chapter.source_chapter_id) throw new StepError("Capítulo sem ID do MangaDex", "permanent");
     const r = await httpJson<{ baseUrl: string; chapter: { hash: string; data: string[]; dataSaver: string[] } }>(
       fetchFn, `${API}/at-home/server/${chapter.source_chapter_id}`, { headers, service: "MangaDex", timeoutMs: 20_000 },
