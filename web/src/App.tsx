@@ -17,6 +17,8 @@ import Integrations from "./pages/Integrations.tsx";
 import Costs from "./pages/Costs.tsx";
 import Storage from "./pages/Storage.tsx";
 import Settings from "./pages/Settings.tsx";
+import Deploy from "./pages/Deploy.tsx";
+import { SetupGuide } from "./setup.tsx";
 
 const MAIN = [
   { to: "/", icon: "⌂", label: "Início" },
@@ -32,6 +34,7 @@ const MORE = [
   { to: "/custos", icon: "$", label: "Custos" },
   { to: "/armazenamento", icon: "◔", label: "Armazenamento" },
   { to: "/config", icon: "⚙", label: "Logs e config." },
+  { to: "/implantacao", icon: "✓", label: "Implantação" },
 ];
 
 function NotConfigured() {
@@ -39,10 +42,10 @@ function NotConfigured() {
     <main className="login">
       <h1>Configuração pendente</h1>
       <p>
-        Este site ainda não foi ligado a um projeto Supabase. Defina <code>VITE_SUPABASE_URL</code> e{" "}
-        <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> (chave pública) nas variáveis do repositório e publique novamente.
-        Veja o passo a passo em <code>docs/IMPLANTACAO.md</code>.
+        Este site ainda não foi ligado a um projeto Supabase. Siga os passos abaixo; depois de definir{" "}
+        <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> e publicar de novo, o painel abre normalmente.
       </p>
+      <SetupGuide />
     </main>
   );
 }
@@ -82,6 +85,7 @@ export default function App() {
         <Route path="/custos" element={<Costs />} />
         <Route path="/armazenamento" element={<Storage />} />
         <Route path="/config" element={<Settings />} />
+        <Route path="/implantacao" element={<Deploy />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
 

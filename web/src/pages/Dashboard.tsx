@@ -4,6 +4,7 @@ import { rows, useQuery, useToast } from "../hooks.ts";
 import { Card, Empty, ErrorBox, fmtDate, fmtUsd, JobProgress, Page, Progress, Stat, StateBadge, Toast } from "../ui.tsx";
 import { formatBytes, quotaLevel } from "../../../supabase/functions/_shared/core/retention.ts";
 import type { JobState } from "../../../supabase/functions/_shared/core/states.ts";
+import { SetupChecklist } from "../setup.tsx";
 
 interface JobRow {
   id: string;
@@ -68,6 +69,7 @@ export default function Dashboard() {
   return (
     <Page title="Painel">
       <ErrorBox error={q.error} />
+      <div style={{ marginBottom: 12 }}><SetupChecklist /></div>
       {d?.settings?.automation_paused && (
         <div className="alert warn stack" role="alert">
           <strong>Automação pausada</strong>
