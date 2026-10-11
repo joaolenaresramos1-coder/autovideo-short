@@ -324,8 +324,11 @@ describe("manual generation from a chapter link", () => {
     const work = (await db.admin.query("select standalone, source from works where id = $1", [r.work_id])).rows[0];
     expect(work).toMatchObject({ standalone: true, source: "link" });
 
+    const dispatches = fake.stats.calls.github_dispatch ?? 0;
     await runTick(edge());
     expect((await jobRow(r.job_id)).state).toBe("fetching");
+    // the render worker is woken up when the job reaches its step
+    expect(fake.stats.calls.github_dispatch).toBeGreaterThan(dispatches);
     await drainQueue(worker(), "worker", WORKER_HANDLERS);
     expect((await jobRow(r.job_id)).state).toBe("analyzing");
     expect(referer).toBe("https://scan.example/");

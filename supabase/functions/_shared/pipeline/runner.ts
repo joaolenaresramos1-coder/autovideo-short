@@ -3,9 +3,9 @@
 
 import { backoffSeconds, StepError, toStepError } from "../core/backoff.ts";
 import { redact } from "../core/crypto.ts";
-import type { JobState } from "../core/states.ts";
+import { type JobState, STEP_EXECUTOR, type WorkState } from "../core/states.ts";
 import type { Job } from "../core/types.ts";
-import type { Ctx } from "./context.ts";
+import { type Ctx, dispatchWorker } from "./context.ts";
 
 export type StepOutcome =
   | { next: JobState; output?: unknown }
@@ -84,9 +84,21 @@ export async function runClaimedJob(
     }
     if (!chain) {
       await repo.releaseJob(job.id, workerId);
+      if (needsWorker(job.state, handlers)) await dispatchWorker(ctx, `${job.state} ${job.id}`);
+      return job;
+    }
+    if (needsWorker(job.state, handlers)) {
+      // the next step runs on the render worker: release the job, then wake it
+      await repo.releaseJob(job.id, workerId);
+      await dispatchWorker(ctx, `${job.state} ${job.id}`);
       return job;
     }
   }
+}
+
+/** The job moved to a worker step that this runner (the Edge) cannot run. */
+function needsWorker(state: JobState, handlers: Partial<Record<JobState, StepHandler>>): boolean {
+  return !handlers[state] && STEP_EXECUTOR[state as WorkState] === "worker";
 }
 
 async function delayJob(ctx: Ctx, job: Job, seconds: number) {

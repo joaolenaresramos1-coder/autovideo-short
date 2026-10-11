@@ -6,7 +6,7 @@ import { expandSchedule } from "../core/schedule.ts";
 import type { JobState } from "../core/states.ts";
 import { connectorFor } from "../connectors/index.ts";
 import type { NewJob } from "../adapters/repo.ts";
-import type { Ctx } from "./context.ts";
+import { type Ctx, dispatchWorker } from "./context.ts";
 import { analyze, discover, generateAudio, writeScript } from "./edge_steps.ts";
 import { publish, startPublishing } from "./publish.ts";
 import { drainQueue, type StepHandler } from "./runner.ts";
@@ -89,6 +89,8 @@ export async function monitorWorks(ctx: Ctx, limit = 3): Promise<{ checked: numb
 export async function runTick(ctx: Ctx) {
   const report: Record<string, unknown> = {};
   report.promoted = await ctx.repo.promoteDueJobs();
+  // jobs resumed after a retry may continue on the render worker
+  if (Number(report.promoted) > 0) report.worker_dispatched = await dispatchWorker(ctx, "resumed jobs");
   report.materialized = await materializeSchedules(ctx);
   report.monitor = await monitorWorks(ctx);
   report.publishing_started = await startPublishing(ctx);
