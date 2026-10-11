@@ -46,6 +46,30 @@ function safeName(name: string): string {
   return name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80) || "arquivo";
 }
 
+/** Finds or creates the work and chapter a manual generation refers to. */
+async function resolveChapter(ctx: Ctx, userId: string, body: Body): Promise<{ workId: string; chapterKey: string; chapterId: string }> {
+  const { repo } = ctx;
+  const url = typeof body.chapter_url === "string" && body.chapter_url.trim() ? body.chapter_url.trim() : null;
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) throw new ApiError("Link do capítulo inválido");
+  let workId = typeof body.work_id === "string" && body.work_id ? uuid(body, "work_id") : null;
+  if (workId) {
+    const work = await repo.getWork(workId);
+    if (!work || work.user_id !== userId) throw new ApiError("Obra não encontrada", 404);
+  } else {
+    const title = (typeof body.title === "string" && body.title.trim()) || (url ? new URL(url).hostname : "Capítulo avulso");
+    const type = ["manga", "manhua", "manhwa", "anime"].includes(String(body.type)) ? String(body.type) : "manhwa";
+    workId = await repo.createWork({ user_id: userId, title: title.slice(0, 200), type, source: "link", standalone: true, url });
+  }
+  const given = typeof body.chapter_key === "string" ? body.chapter_key.replace(/[^\p{L}\p{N}._-]/gu, "").slice(0, 40) : "";
+  const fromUrl = url ? chapterNumberFrom(decodeURIComponent(new URL(url).pathname).replace(/[-_/]+/g, " ")) : null;
+  const chapterKey = given || (fromUrl !== null ? String(fromUrl) : `avulso-${ctx.now().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`);
+  const chapterId = await repo.upsertChapter(userId, workId, chapterKey, {
+    number: given ? chapterNumberFrom(`cap ${given}`) : fromUrl,
+    sourceUrl: url ?? undefined,
+  });
+  return { workId, chapterKey, chapterId };
+}
+
 export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<unknown> {
   const action = str(body, "action", 40);
   const { repo } = ctx;
@@ -160,9 +184,6 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
       const workId = uuid(body, "work_id");
       const work = await repo.getWork(workId);
       if (!work || work.user_id !== userId) throw new ApiError("Obra não encontrada", 404);
-      if (work.authorization_status !== "authorized") {
-        throw new ApiError("Confirme na obra que você tem autorização para reutilizar este material antes de enviar", 403);
-      }
       const chapterKey = str(body, "chapter_key", 40).replace(/[^\p{L}\p{N}._-]/gu, "");
       if (!chapterKey) throw new ApiError("Capítulo inválido");
       const contentType = str(body, "content_type", 60).toLowerCase();
@@ -175,6 +196,37 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
       const signed = await ctx.blobs.signedUploadUrl(path);
       await repo.registerObject(userId, null, path, "upload", size, contentType, true);
       return { path, ...signed };
+    }
+    case "prepare_chapter": {
+      // Where uploaded files of a one-off chapter go (creates the work if needed).
+      const { workId, chapterKey } = await resolveChapter(ctx, userId, body);
+      return { work_id: workId, chapter_key: chapterKey };
+    }
+    case "generate_now": {
+      const { workId, chapterKey, chapterId } = await resolveChapter(ctx, userId, body);
+      const settings = await repo.getSettings(userId);
+      const duration = Math.round(Math.min(180, Math.max(60, Number(body.target_duration_seconds ?? 75))));
+      const platforms = (Array.isArray(body.platforms) ? body.platforms : []).filter((p): p is "youtube" | "tiktok" => p === "youtube" || p === "tiktok");
+      const now = ctx.now().toISOString();
+      const jobId = await repo.createJob({
+        user_id: userId,
+        work_id: workId,
+        schedule_id: null,
+        chapter_id: chapterId,
+        state: "queued",
+        summary_format: "chapter",
+        target_duration_seconds: duration,
+        platforms,
+        priority: 8,
+        slot_at: now,
+        run_at: now,
+        dedupe_key: `manual:${crypto.randomUUID()}`,
+        content_key: null, // manual runs may regenerate the same chapter
+        cost_limit_usd: Math.max(0.5, Number(body.cost_limit_usd ?? 0.5)),
+        max_attempts: settings.max_attempts ?? 5,
+      });
+      await repo.log({ user_id: userId, job_id: jobId, level: "info", event: "manual_generate", message: `Geração manual do capítulo ${chapterKey}` });
+      return { job_id: jobId, work_id: workId, chapter_key: chapterKey };
     }
     case "process_now": {
       return { dispatched: await dispatchWorker(ctx, "user request") };

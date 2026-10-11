@@ -30,13 +30,12 @@ export interface SourceCheck {
 }
 
 export interface Connector {
-  id: Work["source"];
+  id: Work["source"] | "link";
   label: string;
   /** Detects new chapters/episodes automatically. */
   detectsChapters: boolean;
   check(work: Work, fetchFn: FetchLike): Promise<SourceCheck>;
   listChapters(work: Work, fetchFn: FetchLike): Promise<ChapterInfo[]>;
-  /** Only called when the work's reuse authorization is confirmed. */
   pageRefs?(work: Work, chapter: { source_chapter_id: string | null; chapter_key: string }, fetchFn: FetchLike): Promise<PageRef[]>;
 }
 

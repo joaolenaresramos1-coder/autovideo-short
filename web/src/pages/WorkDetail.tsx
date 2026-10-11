@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, supabase } from "../supabase.ts";
 import { rows, useQuery, useToast } from "../hooks.ts";
 import { Badge, Card, Empty, ErrorBox, Field, fmtDate, Loading, Page, Tabs, Toast } from "../ui.tsx";
-import { AUTH_LABEL, STATUS, TYPE_LABEL } from "./Works.tsx";
+import { STATUS, TYPE_LABEL } from "./Works.tsx";
 import type { Certainty, MemoryKind, Work } from "../../../supabase/functions/_shared/core/types.ts";
 
 interface ChapterRow {
@@ -68,6 +68,16 @@ export default function WorkDetail() {
     if (error) toast.fail(error.message);
     q.reload();
   }
+  async function generate(c: ChapterRow) {
+    try {
+      await api("generate_now", { work_id: work.id, chapter_key: c.chapter_key });
+      await api("process_now").catch(() => {});
+      toast.ok(`Produção do capítulo ${c.number ?? c.chapter_key} iniciada`);
+      setTimeout(() => nav("/fila"), 800);
+    } catch (e) {
+      toast.fail((e as Error).message);
+    }
+  }
   async function pause() {
     await supabase.from("works").update({ status: work.status === "paused" ? "active" : "paused" }).eq("id", work.id);
     q.reload();
@@ -87,13 +97,11 @@ export default function WorkDetail() {
             <div className="row">
               <Badge tone={STATUS[work.status].tone}>{STATUS[work.status].label}</Badge>
               <Badge>{TYPE_LABEL[work.type]}</Badge>
-              <Badge tone={work.authorization_status === "authorized" ? "good" : "neutral"}>{AUTH_LABEL[work.authorization_status]}</Badge>
             </div>
             {work.status_reason && <p className="small">{work.status_reason}</p>}
             <div className="small muted">
               Fonte: {work.source}{work.url && <> · <a href={work.url} target="_blank" rel="noreferrer">link</a></>} · último capítulo processado: {work.last_processed_chapter ?? "—"} · verificada {fmtDate(work.last_checked_at)}
             </div>
-            {work.authorization_notes && <p className="small muted">Autorização: {work.authorization_notes} ({fmtDate(work.authorization_confirmed_at)})</p>}
           </div>
           <div className="card-footer">
             <button className="small" onClick={check}>Verificar fonte agora</button>
@@ -106,7 +114,7 @@ export default function WorkDetail() {
         <Tabs value={tab} onChange={setTab} options={[
           { value: "chapters", label: `Capítulos (${chapters.length})` },
           { value: "memory", label: `Memória (${memory.length})` },
-          { value: "upload", label: "Enviar material" },
+          { value: "upload", label: "Enviar capítulo" },
         ]} />
 
         {tab === "chapters" && (
@@ -125,6 +133,7 @@ export default function WorkDetail() {
                   {(c.status === "new" || c.status === "skipped") && (
                     <button className="small" onClick={() => toggleSkip(c)}>{c.status === "skipped" ? "Não ignorar" : "Ignorar"}</button>
                   )}
+                  <button className="small primary" onClick={() => generate(c)}>Gerar vídeo</button>
                   {c.source_url && <a className="btn small" href={c.source_url} target="_blank" rel="noreferrer">Fonte</a>}
                 </div>
               </Card>
@@ -209,14 +218,6 @@ function Upload({ work, onDone, onError }: { work: Work; onDone: () => void; onE
   const [chapter, setChapter] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [progress, setProgress] = useState<string | null>(null);
-
-  if (work.authorization_status !== "authorized") {
-    return (
-      <Card>
-        <p>Para enviar páginas, legendas ou roteiros, confirme em <Link to={`/obras/${work.id}/editar`}>Editar</Link> que você tem autorização para reutilizar o material.</p>
-      </Card>
-    );
-  }
 
   async function send(e: React.FormEvent) {
     e.preventDefault();

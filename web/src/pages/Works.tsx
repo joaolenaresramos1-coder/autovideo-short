@@ -12,12 +12,6 @@ export const STATUS: Record<Work["status"], { label: string; tone: "good" | "war
   pending_config: { label: "Configuração pendente", tone: "warn" },
   error: { label: "Erro na fonte", tone: "bad" },
 };
-export const AUTH_LABEL: Record<Work["authorization_status"], string> = {
-  unknown: "Autorização não informada",
-  metadata_only: "Só metadados",
-  authorized: "Reutilização autorizada",
-  denied: "Reutilização não permitida",
-};
 
 type W = Work & { last_checked_at: string | null };
 
@@ -28,7 +22,7 @@ export default function Works() {
     filter === "all" ? true : filter === "active" ? w.status === "active" : w.status === "pending_config" || w.status === "error",
   );
   return (
-    <Page title="Obras" actions={<Link className="btn primary" to="/obras/nova">+ Nova obra</Link>}>
+    <Page title="Obras" actions={<><Link className="btn" to="/gerar">Gerar vídeo</Link><Link className="btn primary" to="/obras/nova">+ Nova obra</Link></>}>
       <ErrorBox error={q.error} />
       <Tabs value={filter} onChange={setFilter} options={[{ value: "all", label: "Todas" }, { value: "active", label: "Ativas" }, { value: "attention", label: "Atenção" }]} />
       <div className="list" style={{ marginTop: 12 }}>
@@ -45,7 +39,7 @@ export default function Works() {
             </div>
             {w.status_reason && w.status !== "active" && <span className="small">{w.status_reason}</span>}
             <div className="row small muted">
-              <span>{AUTH_LABEL[w.authorization_status]}</span>·<span>verificada {fmtDate(w.last_checked_at)}</span>
+              {w.standalone && <><span>Capítulo avulso</span>·</>}<span>verificada {fmtDate(w.last_checked_at)}</span>
             </div>
           </Link>
         ))}

@@ -124,7 +124,11 @@ export function ServerSetup() {
   const [busy, setBusy] = useState(false);
   const [dispatchedAt, setDispatchedAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value.trim() });
+  // onInput as well as onChange: some mobile browsers fill saved values without a change event.
+  const set = (k: keyof typeof f) => (e: React.FormEvent<HTMLInputElement>) => {
+    const value = e.currentTarget.value.trim();
+    setF((prev) => ({ ...prev, [k]: value }));
+  };
 
   // Follow the deploy runs once they were started.
   const started = steps.some((s) => s.label.startsWith("Iniciar") && s.state === "done");
@@ -153,6 +157,13 @@ export function ServerSetup() {
     setError(null);
     if (!connection) return setError("Conecte o site ao Supabase primeiro.");
     if (!repo.owner || !repo.name) return setError("Informe o dono e o nome do repositório.");
+    const missing = [
+      [f.githubToken, "Token do GitHub"],
+      [f.supabaseToken, "Token de acesso do Supabase"],
+      [f.dbPassword, "Senha do banco de dados"],
+      [f.serviceKey, "Chave service_role"],
+    ].filter(([v]) => !v).map(([, label]) => label);
+    if (missing.length) return setError(`Falta preencher: ${missing.join(", ")}.`);
     setBusy(true);
     const list: Step[] = [];
     const push = (label: string): number => {
@@ -223,7 +234,6 @@ export function ServerSetup() {
     }
   }
 
-  const required = f.githubToken && f.supabaseToken && f.dbPassword && f.serviceKey;
   return (
     <Card title="Configurar o servidor pelo painel">
       <form className="stack small" onSubmit={run}>
@@ -236,30 +246,30 @@ export function ServerSetup() {
           <Field label="Repositório"><input value={repo.name} onChange={(e) => setRepo({ ...repo, name: e.target.value.trim() })} /></Field>
         </div>
         <Field label="Token do GitHub" hint={<>Crie em <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">GitHub → Fine-grained token</a>, só para este repositório, com permissão <b>Read and write</b> em: Actions, Contents, Secrets e Variables. O servidor também o usa para acionar o renderizador.</>}>
-          <input type="password" autoComplete="off" value={f.githubToken} onChange={set("githubToken")} placeholder="github_pat_…" />
+          <input type="password" autoComplete="off" value={f.githubToken} onChange={set("githubToken")} onInput={set("githubToken")} placeholder="github_pat_…" />
         </Field>
         <Field label="Token de acesso do Supabase" hint={<>Em <a href="https://supabase.com/dashboard/account/tokens" target="_blank" rel="noreferrer">Supabase → Account → Access Tokens</a>.</>}>
-          <input type="password" autoComplete="off" value={f.supabaseToken} onChange={set("supabaseToken")} placeholder="sbp_…" />
+          <input type="password" autoComplete="off" value={f.supabaseToken} onChange={set("supabaseToken")} onInput={set("supabaseToken")} placeholder="sbp_…" />
         </Field>
         <Field label="Senha do banco de dados" hint="A senha definida ao criar o projeto (Project Settings → Database permite redefinir).">
-          <input type="password" autoComplete="off" value={f.dbPassword} onChange={set("dbPassword")} />
+          <input type="password" autoComplete="off" value={f.dbPassword} onChange={set("dbPassword")} onInput={set("dbPassword")} />
         </Field>
         <Field label="Chave service_role (secreta)" hint={<>Project Settings → API Keys{ref ? <> do projeto <b>{ref}</b></> : null}. Só o servidor usa; nunca vai para o site.</>}>
-          <input type="password" autoComplete="off" value={f.serviceKey} onChange={set("serviceKey")} />
+          <input type="password" autoComplete="off" value={f.serviceKey} onChange={set("serviceKey")} onInput={set("serviceKey")} />
         </Field>
         <details>
           <summary style={{ minHeight: 44, display: "flex", alignItems: "center" }}>Opcional: Gemini, YouTube e TikTok</summary>
           <div className="stack" style={{ marginTop: 8 }}>
-            <Field label="Chave do Gemini (padrão do servidor)" hint="Também pode ser salva depois em Integrações."><input type="password" autoComplete="off" value={f.gemini} onChange={set("gemini")} /></Field>
-            <Field label="YouTube client ID"><input value={f.ytId} onChange={set("ytId")} /></Field>
-            <Field label="YouTube client secret"><input type="password" autoComplete="off" value={f.ytSecret} onChange={set("ytSecret")} /></Field>
-            <Field label="TikTok client key"><input value={f.ttKey} onChange={set("ttKey")} /></Field>
-            <Field label="TikTok client secret"><input type="password" autoComplete="off" value={f.ttSecret} onChange={set("ttSecret")} /></Field>
+            <Field label="Chave do Gemini (padrão do servidor)" hint="Também pode ser salva depois em Integrações."><input type="password" autoComplete="off" value={f.gemini} onChange={set("gemini")} onInput={set("gemini")} /></Field>
+            <Field label="YouTube client ID"><input value={f.ytId} onChange={set("ytId")} onInput={set("ytId")} /></Field>
+            <Field label="YouTube client secret"><input type="password" autoComplete="off" value={f.ytSecret} onChange={set("ytSecret")} onInput={set("ytSecret")} /></Field>
+            <Field label="TikTok client key"><input value={f.ttKey} onChange={set("ttKey")} onInput={set("ttKey")} /></Field>
+            <Field label="TikTok client secret"><input type="password" autoComplete="off" value={f.ttSecret} onChange={set("ttSecret")} onInput={set("ttSecret")} /></Field>
             <p className="muted">Campos vazios não alteram o que já estiver configurado.</p>
           </div>
         </details>
         <ErrorBox error={error} />
-        <button className="primary" disabled={!required || busy}>{busy ? "Configurando…" : "Configurar"}</button>
+        <button className="primary" disabled={busy}>{busy ? "Configurando…" : "Configurar"}</button>
       </form>
 
       {steps.length > 0 && (

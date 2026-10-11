@@ -58,6 +58,8 @@ export function createFakeFetch(opts: FakeOptions = {}) {
   const stats: FakeStats = { calls: {}, requests: [], youtubeBytes: 0, tiktokBytes: 0 };
   const hit = (k: string) => (stats.calls[k] = (stats.calls[k] ?? 0) + 1);
   let ytReceived = 0;
+  /** Extra routes registered by a test: exact URL -> response factory. */
+  const routes = new Map<string, (init: RequestInit) => Response>();
 
   const fetchFn = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -72,6 +74,12 @@ export function createFakeFetch(opts: FakeOptions = {}) {
       }
     }
     stats.requests.push({ url, method, body: typeof body === "object" ? body : undefined });
+
+    const custom = routes.get(url);
+    if (custom) {
+      stats.calls[`route:${url}`] = (stats.calls[`route:${url}`] ?? 0) + 1;
+      return custom(init);
+    }
 
     // ---- signed URLs of the fake bucket
     if (url.startsWith("file://")) {
@@ -213,5 +221,5 @@ export function createFakeFetch(opts: FakeOptions = {}) {
     }
     return new Response(`fake: rota não mapeada ${method} ${url}`, { status: 404 });
   };
-  return { fetchFn, stats };
+  return { fetchFn, stats, routes };
 }

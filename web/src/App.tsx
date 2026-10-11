@@ -18,11 +18,13 @@ import Costs from "./pages/Costs.tsx";
 import Storage from "./pages/Storage.tsx";
 import Settings from "./pages/Settings.tsx";
 import Deploy from "./pages/Deploy.tsx";
+import Generate from "./pages/Generate.tsx";
 import Connect from "./pages/Connect.tsx";
 import { ServerSetup } from "./serverSetup.tsx";
 
 const MAIN = [
   { to: "/", icon: "⌂", label: "Início" },
+  { to: "/gerar", icon: "✚", label: "Gerar" },
   { to: "/obras", icon: "▤", label: "Obras" },
   { to: "/calendario", icon: "▦", label: "Calendário" },
   { to: "/fila", icon: "⟳", label: "Fila" },
@@ -71,6 +73,7 @@ export default function App() {
 
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/gerar" element={<Generate />} />
         <Route path="/obras" element={<Works />} />
         <Route path="/obras/nova" element={<WorkForm />} />
         <Route path="/obras/:id" element={<WorkDetail />} />

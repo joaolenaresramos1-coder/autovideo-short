@@ -20,7 +20,8 @@ export interface Work {
   title: string;
   type: WorkType;
   url: string | null;
-  source: "manual" | "upload" | "mangadex" | "rss" | "anilist";
+  source: "manual" | "upload" | "mangadex" | "rss" | "anilist" | "link";
+  standalone?: boolean;
   source_ref: string | null;
   language: string;
   monitor_interval_minutes: number;

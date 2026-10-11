@@ -14,6 +14,7 @@ import { MAX_VIDEO_SECONDS, MIN_VIDEO_SECONDS } from "../supabase/functions/_sha
 import type { Job, Panel, Script } from "../supabase/functions/_shared/core/types.ts";
 import { validateVideo } from "../supabase/functions/_shared/core/validation.ts";
 import { connectorFor } from "../supabase/functions/_shared/connectors/index.ts";
+import { linkPageRefs } from "../supabase/functions/_shared/connectors/link.ts";
 import type { AudioOutput, FetchOutput } from "../supabase/functions/_shared/pipeline/edge_steps.ts";
 import { type Ctx, ensureAllowed, geminiFor, jobPath, trackGemini } from "../supabase/functions/_shared/pipeline/context.ts";
 import type { StepHandler, StepOutcome } from "../supabase/functions/_shared/pipeline/runner.ts";
@@ -40,6 +41,7 @@ const isImage = (ct: string | null, path: string) => /^image\//.test(ct ?? "") |
 /** Split one page into 9:16-friendly panels and drop blank slices. */
 async function slicePage(src: string, outDir: string, page: number): Promise<{ file: string; id: string; width: number; height: number }[]> {
   const { width, height } = await imageSize(src);
+  if (width < 300 || height < 200) return []; // icons, buttons, ads
   const w = Math.min(PANEL_WIDTH, width);
   const scaledH = Math.round((height * w) / width);
   const sliceH = Math.round(w * (16 / 9) * 1.15);
@@ -82,13 +84,17 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
     .map((u) => ({ name: u.path.split("/").pop()!, load: () => ctx.blobs.get(u.path) }));
   const texts = uploads.filter((u) => isText(u.content_type, u.path)).map((u) => ({ path: u.path, name: u.path.split("/").pop()! }));
 
-  // 2) pages from an authorized automatic source
+  // 2) pages from the chapter link the user sent, or from the work's source
   if (sources.length === 0 && texts.length === 0) {
     const connector = connectorFor(work);
-    if (!connector.pageRefs) {
-      throw new StepError("Nenhum material enviado para este capítulo e a fonte não fornece páginas: envie o material autorizado", "waiting", 3 * 3600);
+    let refs;
+    if (chapter.source_url && (work.source === "link" || work.source === "upload" || work.source === "manual" || !connector.pageRefs)) {
+      refs = await linkPageRefs(chapter.source_url, ctx.fetch);
+    } else if (connector.pageRefs) {
+      refs = await connector.pageRefs(work, chapter, ctx.fetch);
+    } else {
+      throw new StepError("Este capítulo não tem link nem arquivos: envie o link ou as imagens em Gerar vídeo", "waiting", 3 * 3600);
     }
-    const refs = await connector.pageRefs(work, chapter, ctx.fetch);
     for (const ref of refs) {
       sources.push({
         name: ref.filename,

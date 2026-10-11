@@ -146,13 +146,11 @@ export const upload: Connector = {
   id: "upload",
   label: "Envio manual de material autorizado",
   detectsChapters: false,
-  async check(work) {
+  async check() {
     return {
-      status: work.authorization_status === "authorized" ? "active" : "pending_config",
-      reason: work.authorization_status === "authorized"
-        ? "Envie as páginas, legendas ou o roteiro de cada capítulo pela tela da obra."
-        : "Confirme que você tem autorização para reutilizar o material que vai enviar.",
-      canFetchPages: work.authorization_status === "authorized",
+      status: "active",
+      reason: "Envie as páginas (ou o link) de cada capítulo pela tela da obra ou em Gerar vídeo.",
+      canFetchPages: true,
     };
   },
   async listChapters() {

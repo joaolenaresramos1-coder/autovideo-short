@@ -42,7 +42,7 @@ describe("connectors", () => {
     expect(chapterNumberFrom("Episode 7")).toBe(7);
   });
 
-  it("MangaDex: lists chapters (dedupes groups, skips external) and gates pages behind authorization", async () => {
+  it("MangaDex: lists chapters (dedupes groups, skips external) and fetches pages", async () => {
     const { f, calls } = mockFetch((url) => {
       if (url.includes("/feed")) {
         return json({
@@ -65,13 +65,12 @@ describe("connectors", () => {
     expect(chapters.map((c) => c.key)).toEqual(["1", "3"]);
     expect(calls[0].url).toContain("translatedLanguage%5B%5D=pt-br");
     expect((calls[0].init.headers as Record<string, string>)["user-agent"]).toMatch(/AutoVideoShort/);
-    await expect(mangadex.pageRefs!(w, { source_chapter_id: "c1", chapter_key: "1" }, f)).rejects.toThrow(/Autorização/);
-    const refs = await mangadex.pageRefs!(work({ source_ref: id, authorization_status: "authorized" }), { source_chapter_id: "c1", chapter_key: "1" }, f);
+    const refs = await mangadex.pageRefs!(w, { source_chapter_id: "c1", chapter_key: "1" }, f);
     expect(refs.map((r) => r.url)).toEqual(["https://node.example:443/token/data-saver/h/1.jpg", "https://node.example:443/token/data-saver/h/2.jpg"]);
     expect(refs[0].reportTo).toBe("https://api.mangadex.network/report");
     const check = await mangadex.check(w, f);
     expect(check.status).toBe("active");
-    expect(check.canFetchPages).toBe(false);
+    expect(check.canFetchPages).toBe(true);
   });
 
   it("MangaDex without a valid link stays pending configuration", async () => {
@@ -174,5 +173,34 @@ describe("youtube / tiktok / oauth", () => {
   it("memory byte source slices", async () => {
     const s = memorySource(new Uint8Array([1, 2, 3, 4, 5]));
     expect([...(await s.read(1, 3))]).toEqual([2, 3]);
+  });
+});
+
+describe("chapter links", async () => {
+  const { extractImageUrls, isMangadexChapter, linkPageRefs } = await import("../../supabase/functions/_shared/connectors/link.ts");
+  it("extracts page images in order, preferring lazy-load attributes and skipping site chrome", () => {
+    const html = `
+      <img src="/static/logo.png">
+      <div class="reader">
+        <img src="data:image/gif;base64,AAA" data-src="https://cdn.site/ch5/001.jpg">
+        <img class="lazy" data-lazy-src="//cdn.site/ch5/002.jpg?x=1&amp;y=2" src="/placeholder.gif">
+        <img src="pages/003.webp">
+        <img src="https://cdn.site/ch5/001.jpg">
+        <img src="https://ads.site/ads/banner.jpg">
+      </div>`;
+    expect(extractImageUrls(html, "https://site.com/manga/x/capitulo-5/")).toEqual([
+      "https://cdn.site/ch5/001.jpg",
+      "https://cdn.site/ch5/002.jpg?x=1&y=2",
+      "https://site.com/manga/x/capitulo-5/pages/003.webp",
+    ]);
+    expect(isMangadexChapter("https://mangadex.org/chapter/a1c7c817-4e59-43b7-9365-09675a149a6f/1")).toBe("a1c7c817-4e59-43b7-9365-09675a149a6f");
+  });
+  it("sends the site as referer and explains when no pages are found", async () => {
+    const { f } = mockFetch(() => new Response(`<img src="https://cdn.s/1.jpg"><img src="https://cdn.s/2.jpg">`, { status: 200 }));
+    const refs = await linkPageRefs("https://scan.site/obra/cap-9", f);
+    expect(refs).toHaveLength(2);
+    expect(refs[0].headers?.referer).toBe("https://scan.site/");
+    const empty = mockFetch(() => new Response("<div id=app></div><script src=app.js></script>", { status: 200 }));
+    await expect(linkPageRefs("https://spa.site/cap-1", empty.f)).rejects.toThrow(/Envie as imagens/);
   });
 });

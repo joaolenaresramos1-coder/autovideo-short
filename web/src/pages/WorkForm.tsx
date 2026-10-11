@@ -15,15 +15,13 @@ const EMPTY: Partial<Work> = {
   summary_format: "chapter",
   target_platforms: [],
   visual_mode: "source_panels",
-  authorization_status: "unknown",
-  authorization_notes: "",
 };
 
 const SOURCES = [
   { value: "mangadex", label: "MangaDex (API oficial)" },
   { value: "rss", label: "Feed RSS/Atom oficial" },
   { value: "anilist", label: "AniList (episódios de anime)" },
-  { value: "upload", label: "Envio manual de material autorizado" },
+  { value: "upload", label: "Envio manual (arquivos ou links por capítulo)" },
   { value: "manual", label: "Sem fonte automática" },
 ];
 
@@ -68,8 +66,6 @@ export default function WorkForm() {
       summary_format: w.summary_format,
       target_platforms: w.target_platforms,
       visual_mode: w.visual_mode,
-      authorization_status: w.authorization_status,
-      authorization_notes: w.authorization_notes || null,
       status: "pending_config" as const,
       next_check_at: new Date().toISOString(),
     };
@@ -146,26 +142,6 @@ export default function WorkForm() {
           </div>
         </Card>
 
-        <Card title="Autorização de acesso e reutilização">
-          <div className="stack">
-            <p className="small muted">
-              O sistema não contorna paywalls nem login e só baixa páginas para o vídeo quando você confirma que tem
-              autorização do detentor dos direitos. Sem autorização, a obra pode ser monitorada (só metadados) e você pode
-              enviar material próprio ou usar ilustrações originais.
-            </p>
-            <Field label="Situação">
-              <select value={w.authorization_status} onChange={(e) => set("authorization_status", e.target.value as Work["authorization_status"])}>
-                <option value="unknown">Não sei / não informado</option>
-                <option value="metadata_only">Apenas monitorar capítulos (sem reutilizar imagens)</option>
-                <option value="authorized">Tenho autorização para reutilizar o material</option>
-                <option value="denied">Reutilização não permitida</option>
-              </select>
-            </Field>
-            <Field label="Detalhes da autorização" hint="Ex.: licença, contato com a editora, obra própria. Fica registrado no histórico.">
-              <textarea maxLength={2000} value={w.authorization_notes ?? ""} onChange={(e) => set("authorization_notes", e.target.value)} />
-            </Field>
-          </div>
-        </Card>
         <ErrorBox error={error} />
         <button className="primary" disabled={busy}>{busy ? "Salvando e verificando a fonte…" : "Salvar"}</button>
       </form>

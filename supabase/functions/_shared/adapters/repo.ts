@@ -224,6 +224,9 @@ export interface Repo {
   resumeAutomation(userId: string): Promise<void>;
   findObject(userId: string, objectId: string): Promise<StoredObject | null>;
   upsertChapterForUpload(userId: string, workId: string, chapterKey: string, number: number | null): Promise<string>;
+  createWork(row: { user_id: string; title: string; type: string; source: string; standalone: boolean; url?: string | null; target_platforms?: string[] }): Promise<string>;
+  upsertChapter(userId: string, workId: string, key: string, opts: { number: number | null; title?: string | null; sourceUrl?: string | null }): Promise<string>;
+  createJob(row: NewJob & { state: "queued" | "scheduled"; chapter_id: string | null; content_key: string | null }): Promise<string>;
   putOAuthState(row: { state: string; user_id: string; provider: string; code_verifier: string; redirect_to: string | null }): Promise<void>;
   takeOAuthState(state: string): Promise<{ user_id: string; provider: string; code_verifier: string; redirect_to: string | null } | null>;
 }
