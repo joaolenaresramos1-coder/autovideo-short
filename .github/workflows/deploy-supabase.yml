@@ -73,5 +73,14 @@ jobs:
           echo "$out"
           echo "$out" | grep -q '"ok":true' || { echo "::error::Falha ao configurar o agendador"; exit 1; }
           echo "$out" | grep -q '"cron":true' || echo "::warning::pg_cron indisponível: ative pg_cron e pg_net em Database → Extensions e rode este workflow de novo"
+      - name: Endereço do site no login (e-mails de confirmação)
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then echo "::warning::APP_URL não definido; os e-mails de confirmação usarão o endereço padrão do Supabase"; exit 0; fi
+          curl -sS -f -X PATCH "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"site_url\": \"$APP_URL\", \"uri_allow_list\": \"$APP_URL,${APP_URL}**\"}" > /dev/null \
+            && echo "Site URL configurado: $APP_URL" || echo "::warning::Não foi possível ajustar o Site URL (ajuste em Authentication → URL Configuration)"
       - name: Verificar segredos opcionais
         run: echo "Pronto. Abra o site e siga a lista de verificação do Painel." 

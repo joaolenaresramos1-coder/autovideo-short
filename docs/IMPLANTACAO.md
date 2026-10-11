@@ -1,5 +1,14 @@
 # Implantação passo a passo
 
+## Caminho rápido: tudo pelo painel
+
+1. Abra o site. Na primeira tela, cole a **Project URL** e a chave **publishable/anon** do seu projeto Supabase → **Conectar**.
+2. Toque em **Configurar o servidor** e preencha: token do GitHub (fine-grained, só este repositório, Read and write em Actions, Contents, Secrets e Variables), token de acesso do Supabase, senha do banco e chave service_role. Opcional: Gemini, YouTube, TikTok.
+3. O painel cifra e grava os segredos no GitHub, gera as chaves internas, define as variáveis do site e inicia a instalação (banco, funções, agendador, endereço de confirmação de e-mail). Acompanhe o andamento na própria tela.
+4. Crie sua conta e entre.
+
+O restante deste documento descreve o mesmo processo feito à mão.
+
 Tudo pode ser feito pelo navegador do celular. Nenhum serviço pago é ativado por este projeto; você escolhe os planos.
 
 ## 1. Supabase (banco, login, arquivos e agendador)

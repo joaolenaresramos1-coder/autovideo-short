@@ -18,7 +18,8 @@ import Costs from "./pages/Costs.tsx";
 import Storage from "./pages/Storage.tsx";
 import Settings from "./pages/Settings.tsx";
 import Deploy from "./pages/Deploy.tsx";
-import { SetupGuide } from "./setup.tsx";
+import Connect from "./pages/Connect.tsx";
+import { ServerSetup } from "./serverSetup.tsx";
 
 const MAIN = [
   { to: "/", icon: "⌂", label: "Início" },
@@ -37,15 +38,13 @@ const MORE = [
   { to: "/implantacao", icon: "✓", label: "Implantação" },
 ];
 
-function NotConfigured() {
+function FirstSetup() {
   return (
-    <main className="login">
-      <h1>Configuração pendente</h1>
-      <p>
-        Este site ainda não foi ligado a um projeto Supabase. Siga os passos abaixo; depois de definir{" "}
-        <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> e publicar de novo, o painel abre normalmente.
-      </p>
-      <SetupGuide />
+    <main className="login stack">
+      <h1 style={{ fontSize: "1.3rem" }}>Configurar o servidor</h1>
+      <p className="small muted">Faça isto antes de criar sua conta: a instalação também ajusta o link do e-mail de confirmação.</p>
+      <ServerSetup />
+      <a className="btn" href="#/">Já configurei — ir para o login</a>
     </main>
   );
 }
@@ -54,9 +53,9 @@ export default function App() {
   const { session, loading } = useSession();
   const [more, setMore] = useState(false);
   const location = useLocation();
-  if (!configured) return <NotConfigured />;
+  if (!configured) return <Connect />;
   if (loading) return <Loading />;
-  if (!session) return <Login />;
+  if (!session) return location.pathname === "/configurar" ? <FirstSetup /> : <Login />;
   const moreActive = MORE.some((m) => location.pathname.startsWith(m.to));
 
   return (
