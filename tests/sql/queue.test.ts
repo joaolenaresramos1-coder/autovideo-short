@@ -134,3 +134,19 @@ describe("queue and state machine", () => {
     expect(r.rows[0].data).toMatchObject({ from: "queued", to: "discovering" });
   });
 });
+
+describe("schedule changes", () => {
+  it("changing the time cancels unstarted jobs and frees their slot", async () => {
+    const s = (await db.admin.query(
+      "insert into schedules (user_id, work_id, days_of_week, time_of_day) values ($1, $2, '{1}', '10:00') returning id", [user, work],
+    )).rows[0].id;
+    const j = await insertJob(db, user, work, { schedule_id: s, dedupe_key: `slot:${s}:x:0`, run_at: new Date(Date.now() + 3600_000).toISOString() });
+    const running = await insertJob(db, user, work, { schedule_id: s, state: "rendering" });
+    await db.admin.query("update schedules set time_of_day = '11:00', materialized_until = now() + interval '2 days' where id = $1", [s]);
+    const row = (await db.admin.query("select state, dedupe_key from jobs where id = $1", [j])).rows[0];
+    expect(row.state).toBe("cancelled");
+    expect(row.dedupe_key).not.toBe(`slot:${s}:x:0`);
+    expect((await db.admin.query("select state from jobs where id = $1", [running])).rows[0].state).toBe("rendering");
+    expect((await db.admin.query("select materialized_until from schedules where id = $1", [s])).rows[0].materialized_until).toBeNull();
+  });
+});
