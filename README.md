@@ -35,7 +35,7 @@ Celular / PWA ──► Supabase (Auth, Postgres+RLS, Storage, pg_cron)
 
 ## Limites honestos
 
-- **Direitos autorais:** o sistema só baixa páginas para o vídeo quando você confirma, na obra, que tem autorização de reutilização. Sem isso, a fonte serve apenas para detectar capítulos; use material próprio enviado ou ilustrações originais geradas por IA. Paywalls e logins nunca são contornados.
+- **Links de qualquer site:** cole o link da obra (os capítulos são encontrados na página) ou o link de um capítulo em Gerar vídeo. Se o site só mostrar as imagens por JavaScript ou exigir login, envie as imagens. Você é responsável pelo material que usa e publica.
 - **TikTok:** enquanto o seu app não passar pela auditoria do TikTok, os vídeos só podem ser publicados como privados (`SELF_ONLY`). A API do TikTok não agenda; o envio acontece no horário.
 - **YouTube:** a API tem cota diária própria para uploads.
 - **Supabase Free:** 1 GB de armazenamento e 50 MB por arquivo — o render limita o bitrate para caber; Edge Functions têm 150 s por execução, por isso cada vídeo é dividido em etapas curtas e recuperáveis.

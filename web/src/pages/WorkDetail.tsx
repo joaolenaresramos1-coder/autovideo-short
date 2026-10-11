@@ -100,11 +100,11 @@ export default function WorkDetail() {
             </div>
             {work.status_reason && <p className="small">{work.status_reason}</p>}
             <div className="small muted">
-              Fonte: {work.source}{work.url && <> · <a href={work.url} target="_blank" rel="noreferrer">link</a></>} · último capítulo processado: {work.last_processed_chapter ?? "—"} · verificada {fmtDate(work.last_checked_at)}
+              {work.url && <> · <a href={work.url} target="_blank" rel="noreferrer">link</a></>} · último capítulo processado: {work.last_processed_chapter ?? "—"} · verificada {fmtDate(work.last_checked_at)}
             </div>
           </div>
           <div className="card-footer">
-            <button className="small" onClick={check}>Verificar fonte agora</button>
+            <button className="small" onClick={check}>Procurar capítulos agora</button>
             <button className="small" onClick={pause}>{work.status === "paused" ? "Retomar" : "Pausar"}</button>
             <Link className="btn small" to={`/calendario?obra=${work.id}`}>Calendário</Link>
             <button className="small danger" onClick={remove}>Excluir</button>
@@ -119,7 +119,7 @@ export default function WorkDetail() {
 
         {tab === "chapters" && (
           <div className="list">
-            {chapters.length === 0 && <Card><Empty>Nenhum capítulo detectado ainda. A fonte é consultada automaticamente no intervalo configurado.</Empty></Card>}
+            {chapters.length === 0 && <Card><Empty>Nenhum capítulo detectado ainda. Os capítulos são procurados no link da obra no intervalo configurado, ou use Gerar vídeo em cada capítulo.</Empty></Card>}
             {chapters.map((c) => (
               <Card key={c.id}>
                 <div className="spread">
@@ -134,7 +134,7 @@ export default function WorkDetail() {
                     <button className="small" onClick={() => toggleSkip(c)}>{c.status === "skipped" ? "Não ignorar" : "Ignorar"}</button>
                   )}
                   <button className="small primary" onClick={() => generate(c)}>Gerar vídeo</button>
-                  {c.source_url && <a className="btn small" href={c.source_url} target="_blank" rel="noreferrer">Fonte</a>}
+                  {c.source_url && <a className="btn small" href={c.source_url} target="_blank" rel="noreferrer">Abrir link</a>}
                 </div>
               </Card>
             ))}
