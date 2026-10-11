@@ -34,7 +34,8 @@ describe("connectors", () => {
     expect(detectSource(`https://mangadex.org/title/${id}/one-piece`)).toBe("mangadex");
     expect(detectSource("https://anilist.co/anime/21/one-piece")).toBe("anilist");
     expect(detectSource("https://site.com/feed/")).toBe("rss");
-    expect(detectSource("https://qualquer.site/obra")).toBe("manual");
+    expect(detectSource("https://qualquer.site/obra")).toBe("link");
+    expect(detectSource("")).toBe("upload");
     expect(mangadexId({ source_ref: null, url: `https://mangadex.org/title/${id}/x` })).toBe(id);
     expect(anilistId({ source_ref: null, url: "https://anilist.co/anime/21/x" })).toBe(21);
     expect(mdLanguage("pt-BR")).toBe("pt-br");
@@ -177,7 +178,7 @@ describe("youtube / tiktok / oauth", () => {
 });
 
 describe("chapter links", async () => {
-  const { extractImageUrls, isMangadexChapter, linkPageRefs } = await import("../../supabase/functions/_shared/connectors/link.ts");
+  const { extractChapterLinks, extractImageUrls, isMangadexChapter, link, linkPageRefs } = await import("../../supabase/functions/_shared/connectors/link.ts");
   it("extracts page images in order, preferring lazy-load attributes and skipping site chrome", () => {
     const html = `
       <img src="/static/logo.png">
@@ -202,5 +203,27 @@ describe("chapter links", async () => {
     expect(refs[0].headers?.referer).toBe("https://scan.site/");
     const empty = mockFetch(() => new Response("<div id=app></div><script src=app.js></script>", { status: 200 }));
     await expect(linkPageRefs("https://spa.site/cap-1", empty.f)).rejects.toThrow(/Envie as imagens/);
+  });
+  it("finds chapter links on a work page of any site", async () => {
+    const html = `
+      <a href="/">Início</a><a href="https://outro.site/capitulo-3">fora</a>
+      <ul>
+        <li><a href="/obra/x/capitulo-12/">Capítulo 12</a></li>
+        <li><a href="https://scan.site/obra/x/capitulo-10.5/"><span>Cap. 10.5</span></a></li>
+        <li><a href="/ler?id=99">Chapter 11</a></li>
+        <li><a href="/obra/x/capitulo-12/#top">Capítulo 12 de novo</a></li>
+      </ul>`;
+    const found = extractChapterLinks(html, "https://scan.site/obra/x/");
+    expect(found.map((c) => [c.number, c.url])).toEqual([
+      [10.5, "https://scan.site/obra/x/capitulo-10.5/"],
+      [11, "https://scan.site/ler?id=99"],
+      [12, "https://scan.site/obra/x/capitulo-12/"],
+    ]);
+    const { f } = mockFetch(() => new Response(html, { status: 200 }));
+    const work = { url: "https://scan.site/obra/x/" } as Parameters<typeof link.check>[0];
+    expect(await link.check(work, f)).toMatchObject({ status: "active", canFetchPages: true });
+    expect(await link.listChapters(work, f)).toHaveLength(3);
+    const down = mockFetch(() => new Response("bloqueado", { status: 403 }));
+    expect((await link.check(work, down.f)).status).toBe("active");
   });
 });

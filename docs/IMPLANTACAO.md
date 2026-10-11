@@ -81,7 +81,7 @@ Repositórios públicos sem atividade por 60 dias têm os crons do GitHub pausad
 
 1. Crie a conta no site e confirme o e-mail.
 2. **Integrações → Gemini**: cole a chave (<https://aistudio.google.com>) e use **Testar narração** — isso confirma que o modelo de fala configurado realmente gera áudio.
-3. **Obras → Nova obra**: cole o link (MangaDex, AniList ou RSS) e informe a situação de autorização.
+3. **Obras → Nova obra**: cole o link da obra de qualquer site (ou use **Gerar vídeo** com o link de um capítulo).
 4. **Calendário → + Programação**: dias, horário, fuso, duração e plataformas.
 5. Feche o navegador. Acompanhe depois em **Fila**, **Vídeos** e **Publicações**.
 

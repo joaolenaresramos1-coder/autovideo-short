@@ -6,7 +6,7 @@
 
 import { StepError } from "../core/backoff.ts";
 import { type FetchLike, ensureOk, http, httpJson } from "../adapters/http.ts";
-import type { PageRef } from "./types.ts";
+import type { ChapterInfo, Connector, PageRef } from "./types.ts";
 
 const BROWSER_UA =
   "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36";
@@ -93,3 +93,85 @@ export async function linkPageRefs(url: string, fetchFn: FetchLike): Promise<Pag
     headers: { "user-agent": BROWSER_UA, referer: `${origin}/` },
   }));
 }
+
+const CHAPTER_HINT = /(cap[ií]tulo|capitulo|chapter|chap|cap|ch|epis[oó]dio|episode|ep)[\s._-]*(\d+(?:[.,-]\d+)?)/i;
+
+/**
+ * Chapter links on a work page of any site: same-site <a> tags whose address
+ * or text names a chapter/episode number. One link per number, ordered.
+ */
+export function extractChapterLinks(html: string, pageUrl: string): ChapterInfo[] {
+  const host = new URL(pageUrl).host;
+  const byNumber = new Map<number, ChapterInfo>();
+  for (const m of html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    let abs: URL;
+    try {
+      abs = new URL(m[1].replace(/&amp;/g, "&"), pageUrl);
+    } catch {
+      continue;
+    }
+    if (!/^https?:$/.test(abs.protocol) || abs.host !== host) continue;
+    const text = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    const hit = CHAPTER_HINT.exec(decodeURIComponent(abs.pathname)) ?? CHAPTER_HINT.exec(text);
+    if (!hit) continue;
+    const number = Number(hit[2].replace(/[,-]/, "."));
+    if (!Number.isFinite(number) || byNumber.has(number)) continue;
+    byNumber.set(number, {
+      key: String(number),
+      number,
+      title: text.slice(0, 120) || `Capítulo ${number}`,
+      sourceId: abs.href,
+      url: abs.href,
+      publishedAt: null,
+    });
+  }
+  return [...byNumber.values()].sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+}
+
+async function fetchHtml(url: string, fetchFn: FetchLike): Promise<string> {
+  const res = await ensureOk(
+    await http(fetchFn, url, {
+      headers: { "user-agent": BROWSER_UA, accept: "text/html,application/xhtml+xml", "accept-language": "pt-BR,pt;q=0.9,en;q=0.8" },
+      service: "Site da obra",
+      timeoutMs: 30_000,
+    }),
+    "Site da obra",
+  );
+  return res.text();
+}
+
+/** Any website: chapters come from the work page; pages from each chapter link. */
+export const link: Connector = {
+  id: "link",
+  label: "Link de qualquer site",
+  detectsChapters: true,
+  async check(work, fetchFn) {
+    if (!work.url) {
+      return { status: "active", reason: "Gere vídeos pelo botão Gerar vídeo, com o link ou as imagens de cada capítulo.", canFetchPages: true };
+    }
+    try {
+      const found = extractChapterLinks(await fetchHtml(work.url, fetchFn), work.url);
+      return {
+        status: "active",
+        reason: found.length
+          ? `${found.length} capítulo(s) encontrados na página da obra.`
+          : "Não achei a lista de capítulos nessa página. Use Gerar vídeo com o link de cada capítulo.",
+        canFetchPages: true,
+      };
+    } catch (e) {
+      return {
+        status: "active",
+        reason: `Não consegui abrir a página da obra (${(e as Error).message}). Use Gerar vídeo com o link de cada capítulo.`,
+        canFetchPages: true,
+      };
+    }
+  },
+  async listChapters(work, fetchFn) {
+    if (!work.url) return [];
+    try {
+      return extractChapterLinks(await fetchHtml(work.url, fetchFn), work.url);
+    } catch {
+      return [];
+    }
+  },
+};

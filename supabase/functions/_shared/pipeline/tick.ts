@@ -77,7 +77,7 @@ export async function monitorWorks(ctx: Ctx, limit = 3): Promise<{ checked: numb
     } catch (e) {
       await ctx.repo.updateWork(work.id, {
         status: "error",
-        status_reason: `Falha ao consultar a fonte: ${redact((e as Error).message)}`,
+        status_reason: `Falha ao ler o link da obra: ${redact((e as Error).message)}`,
         last_checked_at: ctx.now().toISOString(),
         next_check_at: next,
       });

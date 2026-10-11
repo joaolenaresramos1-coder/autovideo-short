@@ -197,7 +197,7 @@ export function SetupGuide({ status }: { status?: SetupStatus }) {
       </Step>
 
       <Step n={6} title="Cadastrar obra e calendário" done={status ? status.work && status.schedule : undefined}>
-        <p><Link to="/obras/nova">Nova obra</Link>: cole o link (MangaDex, AniList ou RSS) e informe a autorização de reutilização. Depois crie a programação em <Link to="/calendario">Calendário</Link>.</p>
+        <p><Link to="/obras/nova">Nova obra</Link>: cole o link da obra de qualquer site. Ou use <Link to="/gerar">Gerar vídeo</Link> com o link de um capítulo. Depois crie a programação em <Link to="/calendario">Calendário</Link>.</p>
       </Step>
 
       <Step n={7} title="Worker de renderização (GitHub Actions)" done={status?.worker}>

@@ -144,7 +144,7 @@ export const anilist: Connector = {
 
 export const upload: Connector = {
   id: "upload",
-  label: "Envio manual de material autorizado",
+  label: "Envio manual de capítulos",
   detectsChapters: false,
   async check() {
     return {
@@ -160,13 +160,13 @@ export const upload: Connector = {
 
 export const manual: Connector = {
   id: "manual",
-  label: "Sem fonte automática",
+  label: "Sem link da obra",
   detectsChapters: false,
   async check() {
     return {
-      status: "pending_config",
-      reason: "Esta obra não tem fonte compatível com detecção automática. Escolha MangaDex, RSS, AniList ou envio manual.",
-      canFetchPages: false,
+      status: "active",
+      reason: "Gere vídeos pelo botão Gerar vídeo, com o link ou as imagens de cada capítulo.",
+      canFetchPages: true,
     };
   },
   async listChapters() {

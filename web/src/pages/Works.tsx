@@ -10,7 +10,7 @@ export const STATUS: Record<Work["status"], { label: string; tone: "good" | "war
   active: { label: "Ativa", tone: "good" },
   paused: { label: "Pausada", tone: "neutral" },
   pending_config: { label: "Configuração pendente", tone: "warn" },
-  error: { label: "Erro na fonte", tone: "bad" },
+  error: { label: "Erro no link", tone: "bad" },
 };
 
 type W = Work & { last_checked_at: string | null };
@@ -34,7 +34,7 @@ export default function Works() {
           <Link key={w.id} className="card item" to={`/obras/${w.id}`}>
             <div className="spread"><strong>{w.title}</strong><Badge tone={STATUS[w.status].tone}>{STATUS[w.status].label}</Badge></div>
             <div className="row small muted">
-              <span>{TYPE_LABEL[w.type]}</span>·<span>{w.source}</span>·<span>{w.language}</span>
+              <span>{TYPE_LABEL[w.type]}</span>·<span>{w.language}</span>
               {w.last_processed_chapter && <>·<span>último: cap. {w.last_processed_chapter}</span></>}
             </div>
             {w.status_reason && w.status !== "active" && <span className="small">{w.status_reason}</span>}

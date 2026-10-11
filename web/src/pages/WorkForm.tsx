@@ -9,21 +9,13 @@ const EMPTY: Partial<Work> = {
   title: "",
   type: "manhwa",
   url: "",
-  source: "manual",
+  source: "upload",
   language: "pt-BR",
   monitor_interval_minutes: 360,
   summary_format: "chapter",
   target_platforms: [],
   visual_mode: "source_panels",
 };
-
-const SOURCES = [
-  { value: "mangadex", label: "MangaDex (API oficial)" },
-  { value: "rss", label: "Feed RSS/Atom oficial" },
-  { value: "anilist", label: "AniList (episódios de anime)" },
-  { value: "upload", label: "Envio manual (arquivos ou links por capítulo)" },
-  { value: "manual", label: "Sem fonte automática" },
-];
 
 export default function WorkForm() {
   const { id } = useParams();
@@ -44,13 +36,7 @@ export default function WorkForm() {
   const togglePlatform = (p: Platform) =>
     set("target_platforms", (w.target_platforms ?? []).includes(p) ? (w.target_platforms ?? []).filter((x) => x !== p) : [...(w.target_platforms ?? []), p]);
 
-  function onUrl(url: string) {
-    set("url", url);
-    if (!id) {
-      const s = detectSource(url);
-      if (s !== "manual") set("source", s);
-    }
-  }
+  const onUrl = (url: string) => setW((p) => ({ ...p, url, source: detectSource(url) }));
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -60,13 +46,13 @@ export default function WorkForm() {
       title: w.title?.trim(),
       type: w.type,
       url: w.url?.trim() || null,
-      source: w.source,
+      source: detectSource(w.url),
       language: w.language,
       monitor_interval_minutes: Number(w.monitor_interval_minutes),
       summary_format: w.summary_format,
       target_platforms: w.target_platforms,
       visual_mode: w.visual_mode,
-      status: "pending_config" as const,
+      status: "active" as const,
       next_check_at: new Date().toISOString(),
     };
     const r = id
@@ -98,15 +84,10 @@ export default function WorkForm() {
                 <option value="manga">Mangá</option><option value="manhua">Manhua</option><option value="manhwa">Manhwa</option><option value="anime">Anime</option>
               </select>
             </Field>
-            <Field label="Link (URL)" hint="Cole o link do MangaDex, AniList ou de um feed RSS — a fonte é detectada automaticamente.">
+            <Field label="Link da obra (opcional)" hint="Cole o link da página da obra em qualquer site. Os capítulos são encontrados nessa página; você também pode gerar cada capítulo pelo link dele em Gerar vídeo.">
               <input type="url" inputMode="url" placeholder="https://…" value={w.url ?? ""} onChange={(e) => onUrl(e.target.value)} />
             </Field>
-            <Field label="Fonte">
-              <select value={w.source} onChange={(e) => set("source", e.target.value as Work["source"])}>
-                {SOURCES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Idioma da fonte"><input value={w.language ?? ""} onChange={(e) => set("language", e.target.value)} placeholder="pt-BR" /></Field>
+            <Field label="Idioma da obra"><input value={w.language ?? ""} onChange={(e) => set("language", e.target.value)} placeholder="pt-BR" /></Field>
           </div>
         </Card>
 
@@ -124,7 +105,7 @@ export default function WorkForm() {
             </Field>
             <Field label="Imagens do vídeo">
               <select value={w.visual_mode} onChange={(e) => set("visual_mode", e.target.value as Work["visual_mode"])}>
-                <option value="source_panels">Páginas/quadros autorizados da obra</option>
+                <option value="source_panels">Páginas/quadros da obra</option>
                 <option value="uploaded">Material enviado por mim</option>
                 <option value="ai_illustrations">Ilustrações originais geradas por IA (custo extra)</option>
               </select>
@@ -143,7 +124,7 @@ export default function WorkForm() {
         </Card>
 
         <ErrorBox error={error} />
-        <button className="primary" disabled={busy}>{busy ? "Salvando e verificando a fonte…" : "Salvar"}</button>
+        <button className="primary" disabled={busy}>{busy ? "Salvando e lendo o link…" : "Salvar"}</button>
       </form>
     </Page>
   );

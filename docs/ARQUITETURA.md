@@ -25,7 +25,7 @@
 | Etapa | Executor | Observação |
 |---|---|---|
 | discovering | Edge | escolhe o próximo capítulo; nunca inventa conteúdo quando não há capítulo novo |
-| fetching | Worker | páginas autorizadas ou material enviado; recorte de tiras longas; descarta painéis em branco |
+| fetching | Worker | páginas do link ou material enviado; recorte de tiras longas; descarta painéis em branco |
 | analyzing | Edge | Gemini com imagens, em lotes de 8 com checkpoint por lote |
 | scripting | Edge | roteiro + validação determinística (tamanho, cópia de diálogos) + revisão de coerência pelo Gemini; atualiza a memória |
 | audio_generating | Edge | TTS; a duração real do áudio define o vídeo (ajuste de ±8 %, cartão final curto ou reescrita única) |
