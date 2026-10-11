@@ -26,6 +26,30 @@ function Copy({ value }: { value: string }) {
   );
 }
 
+/** Random values generated in this browser only — never sent anywhere. */
+function SecretGenerator() {
+  const make = () => {
+    const b = crypto.getRandomValues(new Uint8Array(32));
+    const key = btoa(String.fromCharCode(...b));
+    const hex = Array.from(crypto.getRandomValues(new Uint8Array(24)), (x) => x.toString(16).padStart(2, "0")).join("");
+    return { key, hex };
+  };
+  const [v, setV] = useState<{ key: string; hex: string } | null>(null);
+  return (
+    <div className="card stack">
+      <strong>Gerar valores aleatórios</strong>
+      <span className="muted">Gerados aqui no seu aparelho e não são enviados a lugar nenhum. Copie para os secrets do GitHub.</span>
+      <button type="button" className="small" onClick={() => setV(make())}>{v ? "Gerar outros" : "Gerar"}</button>
+      {v && (
+        <>
+          <span>TOKEN_ENCRYPTION_KEY: <Copy value={v.key} /></span>
+          <span>CRON_SECRET: <Copy value={v.hex} /></span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Step({ n, title, done, children }: { n: number; title: string; done?: boolean; children: ReactNode }) {
   return (
     <details className="card" open={done === false}>
@@ -148,7 +172,7 @@ export function SetupGuide({ status }: { status?: SetupStatus }) {
             </tbody>
           </table>
         </div>
-        <p className="muted">Para gerar valores aleatórios no celular, use um gerador de senhas (32+ caracteres). A <b>TOKEN_ENCRYPTION_KEY</b> precisa ser base64 de 32 bytes: no Supabase → SQL Editor rode <Copy value="select encode(gen_random_bytes(32), 'base64');" /></p>
+        <SecretGenerator />
       </Step>
 
       <Step n={3} title="Publicar o site (GitHub Pages)" done={status?.site}>
@@ -161,14 +185,9 @@ export function SetupGuide({ status }: { status?: SetupStatus }) {
 
       <Step n={4} title="Banco, funções e agendador no servidor" done={status?.scheduler}>
         <ol>
-          <li><b>Actions → Deploy Supabase → Run workflow</b> (aplica as migrações e publica as funções tick, cleanup, api e oauth).</li>
-          <li>No Supabase → <b>SQL Editor</b>, rode uma vez (troque o segundo valor pelo seu CRON_SECRET):
-            <div className="stack" style={{ marginTop: 6 }}>
-              <Copy value={`select vault.create_secret('${SUPABASE_URL}', 'project_url');`} />
-              <Copy value={`select vault.create_secret('SEU_CRON_SECRET', 'cron_secret');`} />
-            </div>
-          </li>
-          <li>Confira em <b>Database → Cron Jobs</b>: autovideo-tick, autovideo-cleanup, autovideo-promote, autovideo-storage-alerts. Se faltarem, ative <b>pg_cron</b> e <b>pg_net</b> em Database → Extensions e rode o deploy de novo.</li>
+          <li><b>Actions → Deploy Supabase → Run workflow</b>. Ele aplica as migrações, publica as funções tick, cleanup, api e oauth e configura o agendador sozinho (Vault + pg_cron) — sem SQL manual.</li>
+          <li>Se o workflow avisar que o pg_cron está indisponível: ative <b>pg_cron</b> e <b>pg_net</b> em Database → Extensions e rode o workflow de novo.</li>
+          <li>Depois do primeiro deploy, cada mudança na branch main republica automaticamente.</li>
           <li>Este passo aparece como feito quando a limpeza automática rodar (até 20 min).</li>
         </ol>
       </Step>
@@ -182,7 +201,7 @@ export function SetupGuide({ status }: { status?: SetupStatus }) {
       </Step>
 
       <Step n={7} title="Worker de renderização (GitHub Actions)" done={status?.worker}>
-        <p>Não precisa de ação: ele é acionado pelo Supabase quando há trabalho e, por segurança, a cada 15 min. Para testar: <b>Actions → Render worker → Run workflow</b>. Aparece como feito depois do primeiro capítulo processado.</p>
+        <p>Não precisa de ação: ele é acionado pelo Supabase quando há trabalho e, por segurança, uma vez por hora. Para testar: <b>Actions → Render worker → Run workflow</b>. Aparece como feito depois do primeiro capítulo processado.</p>
       </Step>
 
       <Step n={8} title="YouTube (opcional)" done={status?.youtube}>

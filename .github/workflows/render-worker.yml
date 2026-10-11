@@ -1,6 +1,7 @@
 # Render worker: downloads/slices pages, renders with FFmpeg and validates.
 # Started by the Supabase scheduler (repository_dispatch) and, as a fallback,
-# every 15 minutes. Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+# once an hour (scheduled runs are skipped — no runner, no minutes — until the
+# repository variable VITE_SUPABASE_URL exists). Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
 # TOKEN_ENCRYPTION_KEY (same value as in Supabase). Optional: GEMINI_API_KEY.
 name: Render worker
 
@@ -8,7 +9,7 @@ on:
   repository_dispatch:
     types: [render-worker]
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "7 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -17,6 +18,7 @@ concurrency:
 
 jobs:
   work:
+    if: github.event_name != 'schedule' || vars.VITE_SUPABASE_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:

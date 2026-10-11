@@ -35,14 +35,15 @@ async function main() {
   // Re-check the queue a few times: edge steps may hand new work over while we run.
   let idleRounds = 0;
   let total = 0;
-  while (Date.now() < ctx.deadline - 120_000 && idleRounds < 3) {
+  // Exit quickly when there is nothing to do (each run costs Actions minutes).
+  while (Date.now() < ctx.deadline - 120_000 && idleRounds < (total === 0 ? 1 : 2)) {
     await ctx.repo.promoteDueJobs();
     const r = await drainQueue(ctx, "worker", WORKER_HANDLERS, { maxJobs: 50 });
     total += r.processed;
     for (const e of r.errors) console.error("erro:", e);
     if (r.processed === 0) {
       idleRounds++;
-      await new Promise((res) => setTimeout(res, 30_000));
+      await new Promise((res) => setTimeout(res, 20_000));
     } else {
       idleRounds = 0;
     }

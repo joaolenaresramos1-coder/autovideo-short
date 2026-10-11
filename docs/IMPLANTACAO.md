@@ -16,7 +16,7 @@ Tudo pode ser feito pelo navegador do celular. Nenhum serviço pago é ativado p
 
 No repositório: **Settings → Secrets and variables → Actions**.
 
-Gere dois valores aleatórios (pode usar um gerador de senhas; ou `openssl rand -base64 32` e `openssl rand -hex 24`):
+Gere dois valores aleatórios: o site tem o botão **Implantação → Gerar valores aleatórios** (gerados no próprio aparelho), ou use `openssl rand -base64 32` e `openssl rand -hex 24`.
 
 | Nome | Tipo | Valor |
 |---|---|---|
@@ -43,15 +43,8 @@ Gere dois valores aleatórios (pode usar um gerador de senhas; ou `openssl rand 
 
 ## 4. Banco e Edge Functions
 
-1. Rode **Actions → Deploy Supabase → Run workflow**. Ele aplica as migrações, grava os secrets das funções e publica `tick`, `cleanup`, `api` e `oauth`.
-2. No Supabase, abra **SQL Editor** e execute (uma vez), com os seus valores:
-
-```sql
-select vault.create_secret('https://xxxx.supabase.co', 'project_url');
-select vault.create_secret('MESMO_VALOR_DO_CRON_SECRET', 'cron_secret');
-```
-
-3. Confira em **Database → Cron Jobs** os jobs `autovideo-tick` (1 min), `autovideo-cleanup` (20 min), `autovideo-promote` e `autovideo-storage-alerts`. Se a migração não tiver conseguido criar as extensões, ative **pg_cron** e **pg_net** em *Database → Extensions* e rode o deploy de novo.
+1. Rode **Actions → Deploy Supabase → Run workflow**. Ele aplica as migrações, grava os secrets das funções, publica `tick`, `cleanup`, `api` e `oauth` e **configura o agendador automaticamente** (grava a URL e o `CRON_SECRET` no Vault e cria os jobs do pg_cron).
+2. Confira em **Database → Cron Jobs** os jobs `autovideo-tick` (1 min), `autovideo-cleanup` (20 min), `autovideo-promote` e `autovideo-storage-alerts`. Se a migração não tiver conseguido criar as extensões, ative **pg_cron** e **pg_net** em *Database → Extensions* e rode o deploy de novo.
 
 ## 5. YouTube (opcional)
 
@@ -71,7 +64,7 @@ select vault.create_secret('MESMO_VALOR_DO_CRON_SECRET', 'cron_secret');
 
 ## 7. Worker de renderização
 
-Não precisa de ação: o workflow **Render worker** roda quando o Supabase avisa (via `GH_DISPATCH_TOKEN`) e, por segurança, a cada 15 min. Para testar: **Actions → Render worker → Run workflow**.
+Não precisa de ação: o workflow **Render worker** roda quando o Supabase avisa (via `GH_DISPATCH_TOKEN`) e, por segurança, uma vez por hora. Enquanto a variável `VITE_SUPABASE_URL` não existir, as execuções agendadas são puladas sem gastar minutos. Em repositório privado, cada execução consome minutos do plano (2.000/mês grátis); em repositório público não há limite. Para testar: **Actions → Render worker → Run workflow**.
 
 Repositórios públicos sem atividade por 60 dias têm os crons do GitHub pausados; o disparo pelo Supabase continua funcionando.
 

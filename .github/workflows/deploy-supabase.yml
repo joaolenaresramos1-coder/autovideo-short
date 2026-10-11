@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Automatic deploy on push only once the project is configured.
+    if: github.event_name == 'workflow_dispatch' || vars.VITE_SUPABASE_URL != ''
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -61,3 +63,15 @@ jobs:
           for f in tick cleanup oauth api; do
             supabase functions deploy "$f" --no-verify-jwt --project-ref "$PROJECT_REF"
           done
+      - name: Configurar agendador (Vault + pg_cron)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "::error::CRON_SECRET ausente"; exit 1; fi
+          sleep 10
+          out=$(curl -sS -X POST "https://$PROJECT_REF.supabase.co/functions/v1/tick?setup=1" -H "x-cron-secret: $CRON_SECRET")
+          echo "$out"
+          echo "$out" | grep -q '"ok":true' || { echo "::error::Falha ao configurar o agendador"; exit 1; }
+          echo "$out" | grep -q '"cron":true' || echo "::warning::pg_cron indisponível: ative pg_cron e pg_net em Database → Extensions e rode este workflow de novo"
+      - name: Verificar segredos opcionais
+        run: echo "Pronto. Abra o site e siga a lista de verificação do Painel." 

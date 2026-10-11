@@ -19,6 +19,9 @@ concurrency:
 
 jobs:
   build:
+    # Manual runs always publish (the site then shows the setup guide);
+    # automatic runs only after VITE_SUPABASE_URL is configured.
+    if: github.event_name == 'workflow_dispatch' || vars.VITE_SUPABASE_URL != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
