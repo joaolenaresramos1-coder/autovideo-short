@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { supabase } from "./supabase.ts";
+import { configured, supabase } from "./supabase.ts";
 
 export function useSession(): { session: Session | null; loading: boolean } {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(configured);
   useEffect(() => {
+    if (!configured) return; // site not linked to Supabase yet: the setup guide is shown
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
