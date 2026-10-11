@@ -1,0 +1,35 @@
+{
+  "name": "autovideo-short",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plataforma automática de resumos em vídeo (mangás, manhuas, manhwas e animes) — Supabase + GitHub Actions + PWA.",
+  "type": "module",
+  "workspaces": [
+    "web"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:sql": "vitest run --project sql",
+    "test:all": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check:edge": "deno check --config supabase/functions/deno.json supabase/functions/tick/index.ts supabase/functions/cleanup/index.ts supabase/functions/api/index.ts supabase/functions/oauth/index.ts",
+    "worker": "node worker/main.ts",
+    "web:dev": "npm run dev -w web",
+    "web:build": "npm run build -w web"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.3"
+  }
+}
