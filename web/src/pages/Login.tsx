@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { supabase } from "../supabase.ts";
+import { clearConnection, supabase } from "../supabase.ts";
 import { ErrorBox, Field } from "../ui.tsx";
 
 export default function Login() {
@@ -44,6 +44,12 @@ export default function Login() {
           {mode === "in" ? "Criar uma conta" : "Já tenho conta"}
         </button>
       </form>
+      <div className="card stack small" style={{ marginTop: 12 }}>
+        <strong>Primeira vez?</strong>
+        <span className="muted">Configure o servidor antes de criar a conta.</span>
+        <a className="btn primary" href="#/configurar">Configurar o servidor</a>
+        <button type="button" className="small" onClick={() => { if (confirm("Desligar este navegador do projeto Supabase?")) clearConnection(); }}>Trocar projeto Supabase</button>
+      </div>
     </main>
   );
 }
