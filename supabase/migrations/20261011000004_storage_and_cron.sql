@@ -1,7 +1,8 @@
 -- Private bucket for temporary media. Files are only reachable through
--- short-lived signed URLs created by the Edge Functions.
+-- short-lived signed URLs created by the Edge Functions. 50 MB per file is
+-- the Supabase Free upload limit; the renderer caps the bitrate to fit it.
 insert into storage.buckets (id, name, public, file_size_limit)
-values ('media', 'media', false, 209715200)
+values ('media', 'media', false, 52428800)
 on conflict (id) do update set public = false;
 
 -- Server-side schedule (pg_cron + pg_net). The Edge Function URL and the

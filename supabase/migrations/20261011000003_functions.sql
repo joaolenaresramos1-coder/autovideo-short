@@ -94,7 +94,8 @@ create or replace function public.transition_job(
   p_error text default null,
   p_retry_in_seconds integer default null,
   p_count_attempt boolean default false,
-  p_waiting_reason text default null
+  p_waiting_reason text default null,
+  p_keep_lock boolean default false
 ) returns public.jobs language plpgsql security definer set search_path = public as $$
 declare
   j jobs;
@@ -112,7 +113,9 @@ begin
   end if;
 
   if v_from = p_to then
-    update jobs set locked_by = null, locked_until = null where id = p_job returning * into j;
+    if not p_keep_lock then
+      update jobs set locked_by = null, locked_until = null where id = p_job returning * into j;
+    end if;
     return j;
   end if;
 
@@ -139,8 +142,9 @@ begin
     last_error = case when p_error is not null then left(p_error, 2000)
                       when p_to in ('retry_wait', 'failed') then j.last_error
                       else null end,
-    locked_by = null,
-    locked_until = null,
+    -- keep the lease when the same executor continues with the next step
+    locked_by = case when p_keep_lock and p_to not in ('retry_wait', 'failed', 'cancelled') then j.locked_by end,
+    locked_until = case when p_keep_lock and p_to not in ('retry_wait', 'failed', 'cancelled') then j.locked_until end,
     finished_at = case when p_to in ('published', 'failed', 'cancelled', 'ready_to_publish') then now() else null end
   where id = p_job
   returning * into j;
@@ -429,6 +433,12 @@ returns bigint language sql stable security definer set search_path = public, st
   from storage.objects where bucket_id = p_bucket
 $$;
 
+-- Service: confirm a deletion against Supabase Storage's own catalogue.
+create or replace function public.storage_object_exists(p_bucket text, p_path text)
+returns boolean language sql stable security definer set search_path = public, storage as $$
+  select exists (select 1 from storage.objects where bucket_id = p_bucket and name = p_path)
+$$;
+
 -- Storage dashboard for the signed-in user.
 create or replace function public.storage_summary()
 returns jsonb language plpgsql stable security definer set search_path = public as $$
@@ -573,6 +583,9 @@ returns void language plpgsql security definer set search_path = public as $$
 begin
   update user_settings set automation_paused = false, pause_reason = null, paused_at = null where user_id = p_user;
   update alerts set resolved_at = now() where user_id = p_user and dedupe_key = 'quota_pause' and resolved_at is null;
+  -- wake jobs that were waiting because of the limit
+  update jobs set next_attempt_at = now()
+  where user_id = p_user and state = 'retry_wait' and waiting_reason like 'Limite%';
   insert into job_logs (user_id, event, message) values (p_user, 'automation_resumed', 'Automação reativada manualmente');
 end $$;
 
@@ -598,7 +611,7 @@ begin
   foreach f in array array[
     'promote_due_jobs()', 'claim_jobs(text,text,integer,integer)', 'renew_lease(uuid,text,integer)',
     'release_job(uuid,text)',
-    'transition_job(uuid,text,public.job_state,text,integer,boolean,text)',
+    'transition_job(uuid,text,public.job_state,text,integer,boolean,text,boolean)',
     'save_step(uuid,text,text,jsonb,text)', 'request_job_action(uuid,uuid,text)',
     'register_object(uuid,uuid,text,text,public.storage_kind,bigint,text,boolean)',
     'register_download(uuid,uuid)', 'cleanup_candidates(integer)', 'cleanup_blocked_count()',
@@ -606,7 +619,7 @@ begin
     'refresh_storage_alerts()', 'usage_totals(uuid)',
     'record_usage(uuid,uuid,text,text,text,integer,integer,numeric,text,numeric,boolean)',
     'check_cost_allowance(uuid,uuid,text,numeric)', 'resume_automation(uuid)',
-    'next_chapter_for(uuid,public.summary_format)', 'bucket_usage_bytes(text)', 'handle_new_user()',
+    'next_chapter_for(uuid,public.summary_format)', 'bucket_usage_bytes(text)', 'storage_object_exists(text,text)', 'handle_new_user()',
     'jobs_retention_trigger()'
   ] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);

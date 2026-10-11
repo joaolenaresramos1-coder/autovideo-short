@@ -178,3 +178,13 @@ describe("video validation", () => {
     expect(r.checks.filter((c) => !c.ok).map((c) => c.name).sort()).toEqual(["decodificação", "legendas", "resolução", "áudio"].sort());
   });
 });
+
+describe("file size budget", () => {
+  it("caps the bitrate so 3 minutes fit in the 50 MB upload limit", async () => {
+    const { videoBitrateFor, MAX_FILE_BYTES } = await import("../../supabase/functions/_shared/core/render.ts");
+    const kbps = videoBitrateFor(180);
+    const bytes = ((kbps + 160) * 1000 * 180) / 8;
+    expect(bytes).toBeLessThan(MAX_FILE_BYTES);
+    expect(videoBitrateFor(60)).toBeGreaterThan(kbps);
+  });
+});

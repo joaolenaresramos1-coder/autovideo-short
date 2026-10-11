@@ -45,6 +45,7 @@ export interface Chapter {
   source_url: string | null;
   status: "new" | "processing" | "processed" | "skipped";
   summary: string | null;
+  analysis?: unknown;
 }
 
 export interface Schedule {

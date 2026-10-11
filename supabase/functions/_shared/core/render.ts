@@ -95,6 +95,18 @@ export interface FfmpegJob {
   outputPath: string;
   preset?: string;
   crf?: number;
+  /** Cap on the video bitrate so the file fits the storage upload limit. */
+  maxVideoKbps?: number;
+}
+
+/** Supabase Free rejects uploads above 50 MB: keep a margin. */
+export const MAX_FILE_BYTES = 48 * 1024 * 1024;
+const AUDIO_KBPS = 160;
+
+/** Highest video bitrate that keeps a file of `duration` seconds under `maxBytes`. */
+export function videoBitrateFor(duration: number, maxBytes = MAX_FILE_BYTES): number {
+  const totalKbps = (maxBytes * 8) / 1000 / Math.max(1, duration);
+  return Math.max(1000, Math.min(8000, Math.floor(totalKbps * 0.92 - AUDIO_KBPS)));
 }
 
 function motionFilter(m: Motion, d: number): string {
@@ -168,8 +180,10 @@ export function buildFfmpegArgs(job: FfmpegJob): string[] {
     "-r", String(fps),
     "-s", `${W}x${H}`,
     "-c:v", "libx264", "-preset", job.preset ?? "veryfast", "-crf", String(job.crf ?? 21),
+    "-maxrate", `${job.maxVideoKbps ?? videoBitrateFor(job.duration)}k`,
+    "-bufsize", `${(job.maxVideoKbps ?? videoBitrateFor(job.duration)) * 2}k`,
     "-pix_fmt", "yuv420p", "-profile:v", "high",
-    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+    "-c:a", "aac", "-b:a", `${AUDIO_KBPS}k`, "-ar", "48000",
     "-movflags", "+faststart",
     job.outputPath,
   );

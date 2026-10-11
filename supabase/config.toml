@@ -1,0 +1,39 @@
+# Supabase CLI configuration (https://supabase.com/docs/guides/cli/config).
+project_id = "autovideo-short"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+major_version = 15
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+# Cron-only / redirect endpoints validate their own secret or state.
+[functions.tick]
+verify_jwt = false
+
+[functions.cleanup]
+verify_jwt = false
+
+[functions.oauth]
+verify_jwt = false
+
+# The API checks the user's JWT itself (and handles CORS preflight).
+[functions.api]
+verify_jwt = false

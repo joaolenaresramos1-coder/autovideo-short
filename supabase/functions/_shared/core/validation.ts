@@ -24,6 +24,7 @@ export interface ValidationInput {
   captionsRequired: boolean;
   width?: number;
   height?: number;
+  maxBytes?: number;
 }
 
 export interface ValidationCheck {
@@ -51,6 +52,11 @@ export function validateVideo(v: ValidationInput): ValidationReport {
   const size = Number(v.probe.format?.size ?? 0);
   const checks: ValidationCheck[] = [
     { name: "arquivo", ok: !!video && size > 50_000, detail: `${size} bytes, formato ${v.probe.format?.format_name ?? "?"}` },
+    {
+      name: "tamanho",
+      ok: size <= (v.maxBytes ?? 50 * 1024 * 1024),
+      detail: `${(size / 1048576).toFixed(1)} MB (limite ${((v.maxBytes ?? 50 * 1024 * 1024) / 1048576).toFixed(0)} MB)`,
+    },
     { name: "resolução", ok: video?.width === W && video?.height === H, detail: `${video?.width ?? 0}x${video?.height ?? 0} (esperado ${W}x${H})` },
     { name: "codec", ok: video?.codec_name === "h264" && (video?.pix_fmt ?? "yuv420p") === "yuv420p", detail: `${video?.codec_name ?? "?"}/${video?.pix_fmt ?? "?"}` },
     { name: "áudio", ok: !!audio, detail: audio ? `${audio.codec_name}` : "sem faixa de áudio" },
