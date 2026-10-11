@@ -178,7 +178,7 @@ describe("youtube / tiktok / oauth", () => {
 });
 
 describe("chapter links", async () => {
-  const { extractChapterLinks, extractImageUrls, isMangadexChapter, link, linkPageRefs } = await import("../../supabase/functions/_shared/connectors/link.ts");
+  const { extractChapterLinks, extractImageUrls, extractScriptImageUrls, isMangadexChapter, link, linkPageRefs } = await import("../../supabase/functions/_shared/connectors/link.ts");
   it("extracts page images in order, preferring lazy-load attributes and skipping site chrome", () => {
     const html = `
       <img src="/static/logo.png">
@@ -225,5 +225,32 @@ describe("chapter links", async () => {
     expect(await link.listChapters(work, f)).toHaveLength(3);
     const down = mockFetch(() => new Response("bloqueado", { status: 403 }));
     expect((await link.check(work, down.f)).status).toBe("active");
+  });
+  it("finds pages listed inside scripts when the reader draws them later", async () => {
+    const html = `<div id="reader"></div><script>ts_reader.run({"sources":[{"images":[
+      "https:\\/\\/cdn.scan.site\\/obra\\/cap-7\\/01.webp","https:\\/\\/cdn.scan.site\\/obra\\/cap-7\\/02.webp",
+      "https:\\/\\/cdn.scan.site\\/obra\\/cap-7\\/03.webp"]}]});</script><link rel=icon href="/favicon.png">`;
+    expect(extractScriptImageUrls(html, "https://scan.site/obra/cap-7")).toEqual([
+      "https://cdn.scan.site/obra/cap-7/01.webp",
+      "https://cdn.scan.site/obra/cap-7/02.webp",
+      "https://cdn.scan.site/obra/cap-7/03.webp",
+    ]);
+    const { f } = mockFetch(() => new Response(html, { status: 200 }));
+    expect(await linkPageRefs("https://scan.site/obra/cap-7", f)).toHaveLength(3);
+  });
+});
+
+describe("upload types", async () => {
+  const { uploadContentType, uploadKind } = await import("../../supabase/functions/_shared/core/uploads.ts");
+  it("accepts images, PDFs, comic archives and text, going by the file name first", () => {
+    expect(uploadKind("", "cap 12.pdf")).toBe("pdf");
+    expect(uploadKind("application/octet-stream", "cap.cbz")).toBe("archive");
+    expect(uploadKind("", "cap.CBR")).toBe("archive");
+    expect(uploadKind("", "IMG_0001.HEIC")).toBe("image");
+    expect(uploadKind("image/gif", "x")).toBe("image");
+    expect(uploadKind("", "roteiro.srt")).toBe("text");
+    expect(uploadKind("application/x-msdownload", "virus.exe")).toBeNull();
+    expect(uploadContentType("", "cap.cbz")).toBe("application/vnd.comicbook+zip");
+    expect(uploadContentType("image/jpeg", "foto.jpg")).toBe("image/jpeg");
   });
 });

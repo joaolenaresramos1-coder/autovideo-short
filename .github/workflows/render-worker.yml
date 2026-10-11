@@ -35,10 +35,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: FFmpeg e fontes
+      - name: FFmpeg, leitores de PDF/ZIP e fontes
         if: steps.cfg.outputs.skip != '1'
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core poppler-utils p7zip-full libheif-examples
           mkdir -p worker/fonts
           curl -fsSL -o worker/fonts/Anton-Regular.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf || echo "::warning::fonte Anton indisponível, usando padrão"
       - run: npm ci --omit=dev
@@ -52,3 +52,5 @@ jobs:
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           WORKER_BUDGET_MINUTES: "45"
+          # Chrome comes preinstalled on the runner; used for sites that draw pages with JavaScript
+          CHROME_PATH: /usr/bin/google-chrome

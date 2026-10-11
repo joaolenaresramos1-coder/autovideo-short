@@ -14,13 +14,18 @@ import { MAX_VIDEO_SECONDS, MIN_VIDEO_SECONDS } from "../supabase/functions/_sha
 import type { Job, Panel, Script } from "../supabase/functions/_shared/core/types.ts";
 import { validateVideo } from "../supabase/functions/_shared/core/validation.ts";
 import { connectorFor } from "../supabase/functions/_shared/connectors/index.ts";
-import { linkPageRefs } from "../supabase/functions/_shared/connectors/link.ts";
+import { linkPageRefs, NO_PAGES_MESSAGE } from "../supabase/functions/_shared/connectors/link.ts";
+import type { PageRef } from "../supabase/functions/_shared/connectors/types.ts";
+import { extOf, type UploadKind, uploadKind } from "../supabase/functions/_shared/core/uploads.ts";
 import type { AudioOutput, FetchOutput } from "../supabase/functions/_shared/pipeline/edge_steps.ts";
 import { type Ctx, ensureAllowed, geminiFor, jobPath, trackGemini } from "../supabase/functions/_shared/pipeline/context.ts";
 import type { StepHandler, StepOutcome } from "../supabase/functions/_shared/pipeline/runner.ts";
+import { browserAvailable, browserPages } from "./browser.ts";
 import { decodeErrors, ffprobe, imageSize, lumaStdDev, run, speechIntervals } from "./ffmpeg.ts";
+import { expandUpload, naturalCompare } from "./files.ts";
 
 const MAX_PANELS = 120;
+const MAX_PAGES = 150;
 const PANEL_WIDTH = 1080;
 
 export const WORK_DIR = process.env.WORKER_TMP ?? join(tmpdir(), "autovideo-worker");
@@ -33,8 +38,6 @@ async function jobDir(job: Job): Promise<string> {
   return d;
 }
 
-const isText = (ct: string | null, path: string) => /^text\/|subrip/.test(ct ?? "") || /\.(txt|srt|vtt)$/i.test(path);
-const isImage = (ct: string | null, path: string) => /^image\//.test(ct ?? "") || /\.(jpe?g|png|webp)$/i.test(path);
 
 // ------------------------------------------------------------------ fetching
 
@@ -76,28 +79,42 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
   const dir = join(await jobDir(job), "pages");
   await mkdir(dir, { recursive: true });
 
-  // 1) material uploaded by the user for this chapter
-  const uploads = await ctx.repo.objectsByPrefix(job.user_id, `uploads/${job.user_id}/${work.id}/${chapter.chapter_key}/`);
+  // 1) material uploaded by the user for this chapter (images, PDFs, archives, text)
+  const uploads = (await ctx.repo.objectsByPrefix(job.user_id, `uploads/${job.user_id}/${work.id}/${chapter.chapter_key}/`))
+    .sort((a, b) => naturalCompare(a.path, b.path));
   await ctx.repo.attachObjectsToJob(uploads.map((u) => u.id), job.id);
-  const sources: { name: string; load: () => Promise<Uint8Array> }[] = uploads
-    .filter((u) => isImage(u.content_type, u.path))
-    .map((u) => ({ name: u.path.split("/").pop()!, load: () => ctx.blobs.get(u.path) }));
-  const texts = uploads.filter((u) => isText(u.content_type, u.path)).map((u) => ({ path: u.path, name: u.path.split("/").pop()! }));
+  const sources: { name: string; kind: UploadKind; load: () => Promise<Uint8Array> }[] = [];
+  const texts: FetchOutput["texts"] = [];
+  for (const u of uploads) {
+    const name = u.path.split("/").pop()!;
+    const kind = uploadKind(u.content_type, name);
+    if (kind === "text") texts.push({ path: u.path, name });
+    else if (kind) sources.push({ name, kind, load: () => ctx.blobs.get(u.path) });
+  }
 
   // 2) pages from the chapter link the user sent, or from the work's source
   if (sources.length === 0 && texts.length === 0) {
     const connector = connectorFor(work);
-    let refs;
+    let refs: PageRef[] = [];
     if (chapter.source_url && (work.source === "link" || work.source === "upload" || work.source === "manual" || !connector.pageRefs)) {
-      refs = await linkPageRefs(chapter.source_url, ctx.fetch);
+      try {
+        refs = await linkPageRefs(chapter.source_url, ctx.fetch);
+      } catch (e) {
+        if (!(e instanceof StepError) || e.message !== NO_PAGES_MESSAGE || !browserAvailable()) throw e;
+        // the site draws the pages with JavaScript: open it in a real browser
+        const pages = await browserPages(chapter.source_url);
+        if (pages.length < 2) throw e;
+        for (const p of pages) sources.push({ name: p.name, kind: "image", load: async () => p.bytes });
+      }
     } else if (connector.pageRefs) {
       refs = await connector.pageRefs(work, chapter, ctx.fetch);
     } else {
-      throw new StepError("Este capítulo não tem link nem arquivos: envie o link ou as imagens em Gerar vídeo", "waiting", 3 * 3600);
+      throw new StepError("Este capítulo não tem link nem arquivos: envie o link ou os arquivos em Gerar vídeo", "waiting", 3 * 3600);
     }
     for (const ref of refs) {
       sources.push({
         name: ref.filename,
+        kind: "image",
         load: async () => {
           const t0 = Date.now();
           let ok = false;
@@ -124,19 +141,35 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
   if (sources.length === 0 && texts.length === 0) throw new StepError("Nenhum material disponível para o capítulo", "permanent");
 
   const panels: Panel[] = [];
+  let pageNo = 0;
   for (let i = 0; i < sources.length && panels.length < MAX_PANELS; i++) {
-    const raw = join(dir, `src-${i}`);
+    const ext = extOf(sources[i].name) || "jpg";
+    const raw = join(dir, `src-${String(i).padStart(3, "0")}.${ext}`);
     await writeFile(raw, await sources[i].load());
-    for (const p of await slicePage(raw, dir, i + 1)) {
-      if (panels.length >= MAX_PANELS) break;
-      const path = jobPath(job, `panels/${p.id}.jpg`);
-      const bytes = await readFile(p.file);
-      await ctx.blobs.put(path, bytes, "image/jpeg");
-      await ctx.repo.registerObject(job.user_id, job.id, path, "image", bytes.length, "image/jpeg");
-      panels.push({ id: p.id, path, width: p.width, height: p.height, page: i + 1 });
+    const pageFiles = await expandUpload(raw, sources[i].kind, join(dir, `x-${i}`), MAX_PAGES - pageNo);
+    for (const file of pageFiles) {
+      if (panels.length >= MAX_PANELS || pageNo >= MAX_PAGES) break;
+      pageNo++;
+      let slices: Awaited<ReturnType<typeof slicePage>>;
+      try {
+        slices = await slicePage(file, dir, pageNo);
+      } catch {
+        continue; // unreadable image inside an archive: skip it
+      }
+      for (const p of slices) {
+        if (panels.length >= MAX_PANELS) break;
+        const path = jobPath(job, `panels/${p.id}.jpg`);
+        const bytes = await readFile(p.file);
+        await ctx.blobs.put(path, bytes, "image/jpeg");
+        await ctx.repo.registerObject(job.user_id, job.id, path, "image", bytes.length, "image/jpeg");
+        panels.push({ id: p.id, path, width: p.width, height: p.height, page: pageNo });
+      }
     }
   }
-  await ctx.repo.updateChapter(chapter.id, { page_count: sources.length });
+  if (panels.length === 0 && texts.length === 0) {
+    throw new StepError("Não encontrei páginas legíveis nos arquivos enviados. Envie imagens, PDF ou ZIP/CBZ com as páginas.", "permanent");
+  }
+  await ctx.repo.updateChapter(chapter.id, { page_count: pageNo });
   const output: FetchOutput = { panels, texts };
   return { next: "analyzing", output };
 }

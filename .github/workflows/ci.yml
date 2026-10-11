@@ -35,7 +35,7 @@ jobs:
         with:
           deno-version: v2.x
       - name: Instalar FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core poppler-utils p7zip-full
       - run: npm ci
       - name: Typecheck (Node/worker)
         run: npm run typecheck
