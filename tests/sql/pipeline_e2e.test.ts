@@ -410,3 +410,42 @@ describe("Gemini out of free quota", () => {
     }
   });
 });
+
+describe("Claude subscription first", () => {
+  it("analysis and script run on the worker through Claude Code; the edge leaves them alone", { timeout: 900_000 }, async () => {
+    await db.admin.query("update user_settings set text_provider_order = '{claude,gemini,groq}', claude_model = 'claude-sonnet-5-5' where user_id = $1", [user]);
+    const calls: { model: string; images: number; required: string[] }[] = [];
+    const claudeCtx = (): Ctx => ({
+      ...worker(),
+      claudeCli: async ({ model, prompt, images, schema }) => {
+        const required = (schema as { required?: string[] }).required ?? [];
+        calls.push({ model, images: images.length, required });
+        return { data: fake.answer(required, prompt, "claude"), inputTokens: 10, outputTokens: 5 };
+      },
+    });
+    try {
+      const workId = (await db.admin.query("select id from works where title = 'Cota esgotada'")).rows[0].id;
+      const r = (await handleApi(edge(), user, { action: "generate_now", work_id: workId, chapter_key: "3" })) as { job_id: string };
+      await runTick(edge());
+      expect((await jobRow(r.job_id)).state).toBe("fetching");
+      const before = fake.stats.calls.gemini_analysis ?? 0;
+
+      await drainQueue(claudeCtx(), "worker", WORKER_HANDLERS);
+      const j = await jobRow(r.job_id);
+      expect(j.state, j.last_error ?? "").toBe("audio_generating");
+      expect(calls.some((c) => c.required.includes("batch_summary") && c.images > 0)).toBe(true);
+      expect(calls.some((c) => c.required.includes("memory_updates"))).toBe(true);
+      expect(calls.every((c) => c.model === "claude-sonnet-5-5")).toBe(true);
+      expect(fake.stats.calls.gemini_analysis ?? 0).toBe(before);
+      const used = (await db.admin.query("select count(*)::int n from usage_events where job_id = $1 and provider = 'claude'", [r.job_id])).rows[0].n;
+      expect(used).toBeGreaterThanOrEqual(3);
+
+      // a job of this user waiting in "analyzing" is the worker's, not the edge's
+      await db.admin.query("update jobs set state = 'analyzing', locked_by = null, locked_until = null where id = $1", [r.job_id]);
+      expect((await db.admin.query("select id from claim_jobs('edge', 'e', 10, 60)")).rows.map((x) => x.id)).not.toContain(r.job_id);
+      expect((await db.admin.query("select id from claim_jobs('worker', 'w', 10, 60)")).rows.map((x) => x.id)).toContain(r.job_id);
+    } finally {
+      await db.admin.query("update user_settings set text_provider_order = '{gemini,groq}' where user_id = $1", [user]);
+    }
+  });
+});

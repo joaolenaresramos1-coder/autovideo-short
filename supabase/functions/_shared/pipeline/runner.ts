@@ -10,7 +10,9 @@ import { type Ctx, dispatchWorker } from "./context.ts";
 export type StepOutcome =
   | { next: JobState; output?: unknown }
   /** Step needs more time: keep the state, run again later. */
-  | { stay: true; delaySeconds?: number; reason?: string; output?: unknown };
+  | { stay: true; delaySeconds?: number; reason?: string; output?: unknown }
+  /** Another executor runs this step: release the job untouched. */
+  | { handoff: true };
 
 export type StepHandler = (ctx: Ctx, job: Job) => Promise<StepOutcome>;
 
@@ -54,7 +56,8 @@ export async function runClaimedJob(
       await repo.releaseJob(job.id, workerId);
       return job;
     }
-    await repo.renewLease(job.id, workerId, LEASE_SECONDS[state] ?? 300);
+    // AI steps on the worker (Claude Code) can take several minutes
+    await repo.renewLease(job.id, workerId, LEASE_SECONDS[state] ?? (ctx.claudeCli ? 900 : 300));
     await repo.saveStep(job.id, state, "running");
     let outcome: StepOutcome;
     try {
@@ -65,6 +68,10 @@ export async function runClaimedJob(
       return await handleStepError(ctx, job, err);
     }
 
+    if ("handoff" in outcome) {
+      await repo.releaseJob(job.id, workerId);
+      return job;
+    }
     if ("stay" in outcome) {
       await repo.saveStep(job.id, state, "running", outcome.output);
       if (outcome.delaySeconds) await delayJob(ctx, job, outcome.delaySeconds);

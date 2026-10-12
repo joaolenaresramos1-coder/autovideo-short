@@ -88,3 +88,14 @@ Repositórios públicos sem atividade por 60 dias têm os crons do GitHub pausad
 ## Alternativa de render: Shotstack
 
 O renderizador padrão é o FFmpeg no GitHub Actions (gratuito). A configuração `renderer = shotstack` e os campos `SHOTSTACK_API_KEY`/`SHOTSTACK_ENV` estão reservados, mas **o adaptador Shotstack ainda não foi implementado** — se precisar dele, é o próximo passo natural (o plano de cenas em `core/render.ts` já é independente do renderizador).
+
+## IA de texto: Claude (assinatura), Gemini e Groq
+
+A análise das páginas e o roteiro podem usar três IAs, na ordem escolhida em **Integrações → Ordem das IAs de texto**. Se a primeira estiver ocupada ou sem cota, a próxima assume. A narração (voz) é sempre do Gemini.
+
+- **Claude (assinatura Pro/Max):** roda no worker do GitHub com o Claude Code e conta nos limites do seu plano.
+  1. Gere um token com `claude setup-token` em um computador ou num Codespace.
+  2. Salve o token em **Integrações → Claude**. O site grava o token como o segredo `CLAUDE_CODE_OAUTH_TOKEN` do repositório.
+  3. Coloque o Claude em 1º lugar na ordem. Com o Claude em 1º, a análise e o roteiro dos seus vídeos passam a rodar no worker.
+- **Gemini:** chave em Integrações. O plano grátis tem um limite pequeno de pedidos por dia, por modelo.
+- **Groq:** chave grátis em console.groq.com, salva em Integrações. Use um modelo com visão (★) para analisar as páginas.

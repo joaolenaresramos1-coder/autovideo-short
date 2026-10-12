@@ -117,9 +117,10 @@ export interface UserSettings {
   youtube_privacy: "private" | "unlisted" | "public";
   tiktok_privacy: string;
   ai_disclosure: boolean;
-  /** order in which text AIs are tried: gemini, groq */
+  /** order in which text AIs are tried: claude, gemini, groq */
   text_provider_order?: string[];
   groq_text_model?: string | null;
+  claude_model?: string | null;
 }
 
 export interface CaptionStyle {

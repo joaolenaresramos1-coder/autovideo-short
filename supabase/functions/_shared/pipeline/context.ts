@@ -24,6 +24,18 @@ export interface Env {
   SHOTSTACK_ENV?: string;
 }
 
+/**
+ * Runs a prompt through Claude Code with the user's Claude subscription
+ * (only on the render worker, where the CLI and its token exist).
+ */
+export type ClaudeCliFn = (req: {
+  model: string;
+  prompt: string;
+  images: { name: string; bytes: Uint8Array }[];
+  schema: unknown;
+  timeoutMs: number;
+}) => Promise<{ data: unknown; inputTokens: number; outputTokens: number }>;
+
 export interface Ctx {
   repo: Repo;
   blobs: Blobs;
@@ -33,6 +45,8 @@ export interface Ctx {
   /** Epoch ms after which no new step may start. */
   deadline: number;
   now(): Date;
+  /** Present on the worker when CLAUDE_CODE_OAUTH_TOKEN is configured. */
+  claudeCli?: ClaudeCliFn;
 }
 
 export function remainingMs(ctx: Ctx): number {

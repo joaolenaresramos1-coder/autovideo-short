@@ -325,3 +325,28 @@ describe("Groq and quotas", () => {
     expect(looksVision("llama-3.3-70b-versatile")).toBe(false);
   });
 });
+
+describe("Claude via assinatura (Claude Code CLI)", async () => {
+  const { claudeCli } = await import("../../worker/claude_cli.ts");
+  const bin = new URL("../support/bin/fake-claude", import.meta.url).pathname;
+  it("writes the images for the Read tool and returns the structured output", async () => {
+    const run = claudeCli(bin);
+    const r = await run({
+      model: "claude-opus-5-5", prompt: "Analise", schema: { type: "object", required: ["batch_summary"] }, timeoutMs: 20_000,
+      images: [{ name: "imagem-01.jpg", bytes: new Uint8Array([1, 2]) }, { name: "imagem-02.jpg", bytes: new Uint8Array([3]) }],
+    });
+    expect(r.data).toMatchObject({
+      args: { p: true, format: "json", model: "claude-opus-5-5", tools: "Read", allowed: "Read" },
+      images: ["imagem-01.jpg", "imagem-02.jpg"], missing: [], required: ["batch_summary"],
+    });
+    expect(r.inputTokens).toBe(100);
+  });
+  it("usage limit of the plan becomes a wait, not a failure", async () => {
+    process.env.FAKE_CLAUDE_MODE = "limit";
+    try {
+      await expect(claudeCli(bin)({ model: "m", prompt: "x", schema: {}, timeoutMs: 20_000, images: [] })).rejects.toMatchObject({ kind: "waiting" });
+    } finally {
+      delete process.env.FAKE_CLAUDE_MODE;
+    }
+  });
+});

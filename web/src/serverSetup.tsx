@@ -9,7 +9,7 @@ import { Badge, Card, ErrorBox, Field } from "./ui.tsx";
 
 const GH = "https://api.github.com";
 
-interface Repo {
+export interface Repo {
   owner: string;
   name: string;
 }
@@ -49,7 +49,7 @@ function randomHex(bytes: number): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function sealer(token: string, repo: Repo) {
+export async function sealer(token: string, repo: Repo) {
   const { default: sodium } = await import("libsodium-wrappers");
   await sodium.ready;
   const { data: key } = await gh<{ key_id: string; key: string }>(token, `/repos/${repo.owner}/${repo.name}/actions/secrets/public-key`);
@@ -63,7 +63,7 @@ async function sealer(token: string, repo: Repo) {
   };
 }
 
-async function secretExists(token: string, repo: Repo, name: string): Promise<boolean> {
+export async function secretExists(token: string, repo: Repo, name: string): Promise<boolean> {
   return (await gh(token, `/repos/${repo.owner}/${repo.name}/actions/secrets/${name}`)).status === 200;
 }
 

@@ -2,7 +2,8 @@
 # Started by the Supabase scheduler (repository_dispatch) and, as a fallback,
 # once an hour (scheduled runs are skipped — no runner, no minutes — until the
 # repository variable VITE_SUPABASE_URL exists). Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-# TOKEN_ENCRYPTION_KEY (same value as in Supabase). Optional: GEMINI_API_KEY.
+# TOKEN_ENCRYPTION_KEY (same value as in Supabase). Optional: GEMINI_API_KEY,
+# CLAUDE_CODE_OAUTH_TOKEN (Claude subscription, for analysis and script).
 name: Render worker
 
 on:
@@ -21,6 +22,8 @@ jobs:
     if: github.event_name != 'schedule' || vars.VITE_SUPABASE_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    env:
+      HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - name: Verificar configuração
         id: cfg
@@ -43,6 +46,9 @@ jobs:
           curl -fsSL -o worker/fonts/Anton-Regular.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf || echo "::warning::fonte Anton indisponível, usando padrão"
       - run: npm ci --omit=dev
         if: steps.cfg.outputs.skip != '1'
+      - name: Claude Code (assinatura do Claude, opcional)
+        if: steps.cfg.outputs.skip != '1' && env.HAS_CLAUDE == 'true'
+        run: npm install -g @anthropic-ai/claude-code
       - name: Processar fila
         if: steps.cfg.outputs.skip != '1'
         run: node worker/main.ts
@@ -51,6 +57,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # optional: token from `claude setup-token` (Claude Pro/Max subscription)
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           WORKER_BUDGET_MINUTES: "45"
           # Chrome comes preinstalled on the runner; used for sites that draw pages with JavaScript
           CHROME_PATH: /usr/bin/google-chrome

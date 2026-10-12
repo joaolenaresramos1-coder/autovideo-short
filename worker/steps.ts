@@ -17,7 +17,8 @@ import { connectorFor } from "../supabase/functions/_shared/connectors/index.ts"
 import { linkPageRefs, NO_PAGES_MESSAGE } from "../supabase/functions/_shared/connectors/link.ts";
 import type { PageRef } from "../supabase/functions/_shared/connectors/types.ts";
 import { extOf, type UploadKind, uploadKind } from "../supabase/functions/_shared/core/uploads.ts";
-import type { AudioOutput, FetchOutput } from "../supabase/functions/_shared/pipeline/edge_steps.ts";
+import { analyze, type AudioOutput, type FetchOutput, writeScript } from "../supabase/functions/_shared/pipeline/edge_steps.ts";
+import { claudeFirst } from "../supabase/functions/_shared/pipeline/llm.ts";
 import { type Ctx, ensureAllowed, geminiFor, jobPath, trackGemini } from "../supabase/functions/_shared/pipeline/context.ts";
 import type { StepHandler, StepOutcome } from "../supabase/functions/_shared/pipeline/runner.ts";
 import { browserAvailable, browserPages } from "./browser.ts";
@@ -379,8 +380,19 @@ function timed(name: string, fn: StepHandler): StepHandler {
   };
 }
 
+/** Analysis and script run here only for users who put Claude first. */
+function claudeStep(step: StepHandler): StepHandler {
+  return async (ctx, job) => {
+    const settings = await ctx.repo.getSettings(job.user_id);
+    if (!claudeFirst(settings)) return { handoff: true };
+    return step(ctx, job);
+  };
+}
+
 export const WORKER_HANDLERS: Record<string, StepHandler> = {
   fetching: timed("fetching", fetchMaterial),
+  analyzing: timed("analyzing", claudeStep(analyze)),
+  scripting: timed("scripting", claudeStep(writeScript)),
   rendering: timed("rendering", render),
   validating: timed("validating", validate),
 };
