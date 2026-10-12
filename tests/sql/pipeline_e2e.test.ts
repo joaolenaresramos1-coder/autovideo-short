@@ -15,6 +15,7 @@ import { type Ctx, putUserSecret } from "../../supabase/functions/_shared/pipeli
 import { runTick } from "../../supabase/functions/_shared/pipeline/tick.ts";
 import { runCleanup } from "../../supabase/functions/_shared/pipeline/cleanup.ts";
 import { drainQueue } from "../../supabase/functions/_shared/pipeline/runner.ts";
+import { clearAiCooldowns } from "../../supabase/functions/_shared/pipeline/llm.ts";
 import { WORKER_HANDLERS } from "../../worker/steps.ts";
 import { ffprobe } from "../../worker/ffmpeg.ts";
 import { createTestDb, type TestDb } from "./helpers.ts";
@@ -389,6 +390,7 @@ describe("Gemini out of free quota", () => {
       expect(used.find((u) => u.provider === "groq")?.n).toBeGreaterThanOrEqual(4);
     } finally {
       fake.control.geminiTextDown = false;
+      clearAiCooldowns();
     }
   });
 
@@ -407,6 +409,7 @@ describe("Gemini out of free quota", () => {
       expect(new Date(j.next_attempt_at).getTime() - Date.now()).toBeGreaterThan(20 * 3600_000);
     } finally {
       fake.control.geminiTextDown = false;
+      clearAiCooldowns();
     }
   });
 });
@@ -488,5 +491,30 @@ describe("expired panels", () => {
     await db.admin.query("update jobs set next_attempt_at = now() - interval '1 second' where id = $1", [r.job_id]);
     await repo.promoteDueJobs();
     expect((await jobRow(r.job_id)).state).toBe("fetching");
+  });
+});
+
+describe("Gemini model out of quota", () => {
+  it("another Flash model of the same key answers (the free quota is per model)", { timeout: 900_000 }, async () => {
+    await db.admin.query(
+      `insert into integrations (user_id, provider, status, metadata) values ($1, 'gemini', 'connected', $2)
+       on conflict (user_id, provider) do update set metadata = excluded.metadata, status = 'connected'`,
+      [user, JSON.stringify({ text_models: ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-flash-tts"] })],
+    );
+    fake.control.geminiDownModel = "gemini-3.8-flash";
+    try {
+      const workId = (await db.admin.query("select id from works where title = 'Cota esgotada'")).rows[0].id;
+      const r = (await handleApi(edge(), user, { action: "generate_now", work_id: workId, chapter_key: "3" })) as { job_id: string };
+      await runTick(edge());
+      await drainQueue(worker(), "worker", WORKER_HANDLERS);
+      await runTick(edge());
+      const j = await jobRow(r.job_id);
+      expect(j.state, j.last_error ?? "").toBe("rendering");
+      const models = (await db.admin.query("select distinct model from usage_events where job_id = $1 and kind = 'gemini_text'", [r.job_id])).rows.map((x) => x.model);
+      expect(models).toEqual(["gemini-3.8-flash-lite"]);
+    } finally {
+      fake.control.geminiDownModel = "";
+      clearAiCooldowns();
+    }
   });
 });
