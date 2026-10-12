@@ -178,6 +178,8 @@ export function scriptPrompt(opts: {
     "3. Texto original: não copie os diálogos; parafraseie o sentido com suas palavras.",
     "4. Comece com um gancho forte de uma frase. Ritmo rápido, frases curtas, tom envolvente de canal de resumos.",
     "5. Divida em 10 a 24 trechos; cada trecho tem 1 a 2 frases e cita, em ordem, os identificadores das imagens que o ilustram.",
+    "   A imagem de cada trecho precisa MOSTRAR exatamente o que a frase narra (o mesmo personagem, a mesma ação, o mesmo momento), conforme a descrição da imagem na análise.",
+    "   Use 1 ou 2 imagens por trecho, siga a ordem da história e não repita a mesma imagem em trechos seguidos sem necessidade. Nunca deixe um trecho sem imagem.",
     `   Identificadores disponíveis: ${opts.panelIds.length ? opts.panelIds.join(", ") : "(nenhum — deixe panels vazio)"}.`,
     "6. Em cada trecho escolha até 2 palavras de destaque (emphasis) que aparecerão coloridas na legenda.",
     "7. Título com no máximo 90 caracteres, sem prometer o que o vídeo não mostra. Descrição curta com aviso de que é um resumo. 3 a 6 hashtags.",

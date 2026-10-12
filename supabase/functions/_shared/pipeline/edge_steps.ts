@@ -340,7 +340,10 @@ export async function writeScript(ctx: Ctx, job: Job): Promise<StepOutcome> {
   if (!script || !ai) {
     throw new StepError(`Roteiro reprovado na validação: ${feedback.slice(0, 3).join("; ")}`, "permanent");
   }
-  script = fillMissingPanels(script, usablePanels);
+  const descriptions = Object.fromEntries((analysis?.panels ?? []).map((p) => [
+    p.id, [p.scene, ...(p.characters ?? []), ...p.dialogues.map((d) => `${d.speaker} ${d.meaning}`)].join(" "),
+  ]));
+  script = fillMissingPanels(script, usablePanels, descriptions);
 
   const scriptId = await ctx.repo.saveScript({
     user_id: job.user_id,

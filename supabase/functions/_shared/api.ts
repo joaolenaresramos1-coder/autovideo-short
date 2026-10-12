@@ -185,6 +185,15 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
       });
       return check;
     }
+    case "preview_url": {
+      // Watch inside the panel: short-lived link, not counted as a download
+      // (does not start the 24 h deletion countdown).
+      const objectId = uuid(body, "object_id");
+      const obj = await repo.findObject(userId, objectId);
+      if (!obj || obj.kind !== "video") throw new ApiError("Vídeo não encontrado", 404);
+      if (obj.deleted_at || (obj.expires_at && new Date(obj.expires_at) <= ctx.now())) throw new ApiError("O arquivo deste vídeo já foi excluído", 410);
+      return { url: await ctx.blobs.signedUrl(obj.path, 3600), link_expires_in_seconds: 3600 };
+    }
     case "download_url": {
       const objectId = uuid(body, "object_id");
       const obj = await repo.findObject(userId, objectId);

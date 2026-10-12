@@ -172,18 +172,52 @@ export function validateScript(
 }
 
 /** Fill segments without panels with the nearest previous/next ones. */
-export function fillMissingPanels(s: Script, panels: Panel[]): Script {
+const STOP = new Set(("a o as os um uma uns umas de do da dos das em no na nos nas por para pra com sem que e é ele ela eles elas " +
+  "se seu sua seus suas mas mais como já não sim ao aos à às isso essa esse esta este lhe me te nos foi ser está era tem").split(" "));
+
+function words(text: string): Set<string> {
+  return new Set(
+    text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOP.has(w)),
+  );
+}
+
+/**
+ * Segments the model left without an image get the one that best matches
+ * what is being narrated (words shared with the image description), looking
+ * forward from the last image shown so the story keeps its order. Without
+ * any match, the next image in reading order is used.
+ */
+export function fillMissingPanels(s: Script, panels: Panel[], descriptions: Record<string, string> = {}): Script {
   const order = panels.map((p) => p.id);
-  let last: string | undefined;
+  const desc = new Map(order.map((id) => [id, words(descriptions[id] ?? "")]));
   let cursor = 0;
+  let last: string | undefined;
   const segments = s.segments.map((seg) => {
     if (seg.panels.length > 0) {
       last = seg.panels[seg.panels.length - 1];
       cursor = Math.max(cursor, order.indexOf(last) + 1);
       return seg;
     }
-    const pick = order[cursor % Math.max(1, order.length)] ?? last;
-    cursor++;
+    if (order.length === 0) return seg;
+    const said = words(seg.text);
+    let best: string | undefined;
+    let bestScore = 0;
+    // the next images, in order (a little back too: the narration may recap)
+    const from = Math.max(0, cursor - 2);
+    for (const id of order.slice(from, from + 12)) {
+      let score = 0;
+      for (const w of said) if (desc.get(id)?.has(w)) score++;
+      if (score > bestScore) {
+        bestScore = score;
+        best = id;
+      }
+    }
+    const pick = best ?? order[Math.min(cursor, order.length - 1)] ?? last;
+    if (pick) {
+      cursor = Math.max(cursor, order.indexOf(pick) + 1);
+      last = pick;
+    }
     return { ...seg, panels: pick ? [pick] : [] };
   });
   return { ...s, segments };
