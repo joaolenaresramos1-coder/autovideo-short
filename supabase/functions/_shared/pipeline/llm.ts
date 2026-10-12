@@ -138,8 +138,10 @@ export async function generateJsonAny<T>(
       }
       return { data: r.data, provider: c.provider, model: c.model };
     } catch (e) {
-      // busy, out of quota or bad key: the next provider may answer
-      if (!(e instanceof StepError) || (e.kind !== "waiting" && e.kind !== "config")) throw e;
+      // busy, out of quota, bad key or a request this provider rejects
+      // (HTTP 4xx, e.g. a model limit): the next provider may answer
+      const providerSide = e instanceof StepError && (e.kind === "waiting" || e.kind === "config" || /HTTP 4\d\d/.test(e.message));
+      if (!providerSide) throw e;
       failures.push(e);
     }
   }
@@ -152,6 +154,10 @@ export async function generateJsonAny<T>(
     const note = list.length > 1 ? " (todas as IAs configuradas estão ocupadas ou sem cota)" : "";
     throw new StepError(`${waiting[0].message}${note}`, "waiting", wait);
   }
-  if (failures.length) throw failures[0];
+  if (failures.length) {
+    const f = failures[0];
+    // a request rejected by every provider is worth one more try later, not a dead job
+    throw /HTTP 4\d\d/.test(f.message) && f.kind === "permanent" ? new StepError(f.message, "retryable", 300) : f;
+  }
   throw new StepError("Nenhuma IA de texto disponível", "retryable");
 }
