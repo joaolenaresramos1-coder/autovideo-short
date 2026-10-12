@@ -161,3 +161,23 @@ describe("chapter drawn by JavaScript", () => {
     }
   });
 });
+
+describe("captions synced to the voice", () => {
+  it("speech recognition gives the real time of each word, even with silence before the voice", { timeout: 600_000 }, async () => {
+    if (!(await has("espeak-ng")) || (await run("python3", ["-c", "import faster_whisper"])).code !== 0) return;
+    const { heardWords } = await import("../../worker/steps.ts");
+    const { alignToHeard } = await import("../../supabase/functions/_shared/core/captions.ts");
+    const dir = await mkdtemp(join(tmpdir(), "sync-"));
+    const text = "Ninguém esperava, mas aos quatro anos ele já sabia lutar com a espada do pai.";
+    await run("espeak-ng", ["-v", "pt-br", "-w", join(dir, "v.wav"), text]);
+    // 2 s of silence before the voice: the old estimate showed the words too early
+    await run("ffmpeg", ["-v", "error", "-y", "-i", join(dir, "v.wav"), "-af", "adelay=2000:all=1", join(dir, "late.wav")]);
+    const heard = await heardWords(join(dir, "late.wav"));
+    expect(heard?.length).toBeGreaterThan(8);
+    const words = alignToHeard([{ text, panels: [] }], heard!)!;
+    expect(words).not.toBeNull();
+    expect(words[0].start).toBeGreaterThan(1.8);
+    const espada = words.find((w) => w.text === "ESPADA")!;
+    expect(espada.start).toBeGreaterThan(words.find((w) => w.text === "QUATRO")!.start);
+  });
+});

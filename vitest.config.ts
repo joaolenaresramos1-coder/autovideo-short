@@ -21,6 +21,8 @@ export default defineConfig({
       {
         test: {
           name: "sql",
+          // fake narration is not speech: skip the speech recognition there
+          env: { CAPTION_ALIGN: "off" },
           include: ["tests/sql/**/*.test.ts"],
           environment: "node",
           testTimeout: 60_000,

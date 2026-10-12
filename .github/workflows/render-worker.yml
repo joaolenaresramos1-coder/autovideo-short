@@ -46,6 +46,21 @@ jobs:
           curl -fsSL -o worker/fonts/Anton-Regular.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf || echo "::warning::fonte Anton indisponível, usando padrão"
       - run: npm ci --omit=dev
         if: steps.cfg.outputs.skip != '1'
+      # Speech recognition used only to sync the captions with the narration
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.skip != '1'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+      - name: Alinhamento das legendas (faster-whisper)
+        if: steps.cfg.outputs.skip != '1'
+        run: pip install -r worker/requirements.txt || echo "::warning::sem alinhamento; legendas com tempo estimado"
+      - uses: actions/cache@v4
+        if: steps.cfg.outputs.skip != '1'
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-small-v1
       - name: Claude Code (assinatura do Claude, opcional)
         if: steps.cfg.outputs.skip != '1' && env.HAS_CLAUDE == 'true'
         run: npm install -g @anthropic-ai/claude-code

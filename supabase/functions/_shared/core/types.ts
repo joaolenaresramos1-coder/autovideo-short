@@ -128,7 +128,11 @@ export interface CaptionStyle {
   color: string; // #RRGGBB
   accent: string; // #RRGGBB
   outline: number;
+  /** where the word sits: bottom (above the TikTok/Shorts description, default), middle or top */
+  position?: CaptionPosition;
 }
+
+export type CaptionPosition = "bottom" | "middle" | "top";
 
 export interface ModelPrice {
   /** USD per 1M input tokens */

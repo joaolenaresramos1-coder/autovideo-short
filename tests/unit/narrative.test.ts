@@ -225,3 +225,32 @@ describe("render plan: images follow the narration", () => {
     expect(filled.segments[1].panels).toEqual(["p002-1"]);
   });
 });
+
+describe("captions: position and real timing", async () => {
+  const { alignToHeard, CAPTION_Y } = await import("../../supabase/functions/_shared/core/captions.ts");
+  it("bottom by default, above the platform description; top and middle on request", () => {
+    const words = timeWords(segments, 10);
+    const style = { font: "Anton", color: "#FFE600", accent: "#7CFF4F", outline: 8 };
+    expect(buildAss(words, style)).toContain(`\\pos(502,${Math.round(CAPTION_Y.bottom * 1920)})`);
+    expect(CAPTION_Y.bottom * 1920).toBeLessThan(1920 * 0.7);
+    expect(buildAss(words, { ...style, position: "top" })).toContain(`\\pos(540,${Math.round(0.24 * 1920)})`);
+    expect(buildAss(words, { ...style, position: "middle" })).toContain(`,960)`);
+  });
+  it("words take the times heard in the narration, even when the voice starts late", () => {
+    // the voice starts at 2.5 s; "camponês" was heard as "campones", "quatro" was not heard
+    const heard = [
+      ["Ele", 2.5, 2.7], ["acordou", 2.7, 3.2], ["no", 3.2, 3.3], ["corpo", 3.3, 3.7], ["de", 3.7, 3.8], ["um", 3.8, 3.9], ["campones", 3.9, 4.6],
+      ["Mas", 5.4, 5.6], ["aos", 5.6, 5.8], ["anos", 6.4, 6.8], ["já", 6.8, 7.0], ["sabia", 7.0, 7.4], ["o", 7.4, 7.5], ["que", 7.5, 7.7], ["fazer", 7.7, 8.2],
+    ].map(([w, s, e]) => ({ w: w as string, s: s as number, e: e as number }));
+    const words = alignToHeard(segments, heard)!;
+    expect(words[0]).toMatchObject({ text: "ELE", start: 2.5 });
+    expect(words.find((w) => w.text === "CAMPONÊS")).toMatchObject({ start: 3.9, end: 4.6 });
+    const quatro = words.find((w) => w.text === "QUATRO")!;
+    expect(quatro.start).toBeGreaterThanOrEqual(5.8);
+    expect(quatro.end).toBeLessThanOrEqual(6.4);
+    // tempo-adjusted audio: times are divided by the tempo
+    expect(alignToHeard(segments, heard, 1.25)![0].start).toBe(2);
+    // nothing in common: not trusted
+    expect(alignToHeard(segments, [{ w: "xyz", s: 0, e: 1 }])).toBeNull();
+  });
+});
