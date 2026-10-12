@@ -8,6 +8,7 @@ import type { Ctx, Env } from "../supabase/functions/_shared/pipeline/context.ts
 import { drainQueue } from "../supabase/functions/_shared/pipeline/runner.ts";
 import { ffmpegOk } from "./ffmpeg.ts";
 import { WORKER_HANDLERS } from "./steps.ts";
+import { claudeCli } from "./claude_cli.ts";
 
 async function main() {
   const env = process.env as Env & { WORKER_BUDGET_MINUTES?: string };
@@ -31,7 +32,10 @@ async function main() {
     workerId: `gha-${process.env.GITHUB_RUN_ID ?? hostname()}-${process.pid}`,
     deadline: Date.now() + budget,
     now: () => new Date(),
+    // the user's Claude subscription, when the token is configured
+    claudeCli: process.env.CLAUDE_CODE_OAUTH_TOKEN ? claudeCli() : undefined,
   };
+  if (ctx.claudeCli) console.log("Claude (assinatura) disponível para análise e roteiro");
   // Re-check the queue a few times: edge steps may hand new work over while we run.
   let idleRounds = 0;
   let total = 0;

@@ -1,15 +1,23 @@
-// Text AI for analysis, script and review: Gemini or Groq, in the order the
-// user chose. When one is busy or out of free quota, the other (if it has a
-// saved key) answers instead, inside the same step.
+// Text AI for analysis, script and review: Claude (the user's subscription,
+// on the render worker), Gemini or Groq, in the order the user chose. When
+// one is busy or out of quota, the next available one answers instead,
+// inside the same step.
 
 import { StepError } from "../core/backoff.ts";
 import type { Job, UserSettings } from "../core/types.ts";
 import type { GeminiUsage, Part } from "../adapters/gemini.ts";
 import { type AltProvider, OpenAICompatClient } from "../adapters/openai_compat.ts";
-import { type Ctx, geminiFor, getUserSecret, trackGemini } from "./context.ts";
+import { base64ToBytes } from "../core/wav.ts";
+import { type Ctx, geminiFor, getUserSecret, remainingMs, trackGemini } from "./context.ts";
 
-export type TextProvider = "gemini" | AltProvider;
-export const TEXT_PROVIDERS: TextProvider[] = ["gemini", "groq"];
+export type TextProvider = "claude" | "gemini" | AltProvider;
+export const TEXT_PROVIDERS: TextProvider[] = ["claude", "gemini", "groq"];
+export const DEFAULT_CLAUDE_MODEL = "claude-opus-5-5";
+
+/** Claude goes first: analysis and script then run on the render worker. */
+export function claudeFirst(settings: Pick<UserSettings, "text_provider_order">): boolean {
+  return providerOrder(settings)[0] === "claude";
+}
 
 interface Candidate {
   provider: TextProvider;
@@ -31,13 +39,38 @@ const secretName = (p: AltProvider) => `${p}_api_key`;
 
 export function providerOrder(settings: Pick<UserSettings, "text_provider_order">): TextProvider[] {
   const chosen = (settings.text_provider_order ?? []).filter((p): p is TextProvider => TEXT_PROVIDERS.includes(p as TextProvider));
-  return [...new Set([...chosen, ...TEXT_PROVIDERS])];
+  // Claude only when the user put it in the list (it needs the GitHub token)
+  return [...new Set([...chosen, ...TEXT_PROVIDERS.filter((p) => p !== "claude")])];
 }
 
 async function candidates(ctx: Ctx, userId: string, settings: UserSettings): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const provider of providerOrder(settings)) {
-    if (provider === "gemini") {
+    if (provider === "claude") {
+      const cli = ctx.claudeCli;
+      if (!cli) continue; // only on the worker, with CLAUDE_CODE_OAUTH_TOKEN
+      const model = settings.claude_model || DEFAULT_CLAUDE_MODEL;
+      out.push({
+        provider, model, maxImages: 20,
+        call: async (parts, schema) => {
+          const images: { name: string; bytes: Uint8Array }[] = [];
+          const text: string[] = [];
+          for (const p of parts) {
+            if ("text" in p) {
+              text.push(p.text);
+            } else {
+              const name = `imagem-${String(images.length + 1).padStart(2, "0")}.jpg`;
+              images.push({ name, bytes: base64ToBytes(p.inlineData.data) });
+              text.push(`[${name}]`);
+            }
+          }
+          // Claude Code reads the images itself: give it time (it runs on the worker)
+          const timeoutMs = Math.max(120_000, Math.min(600_000, remainingMs(ctx) - 30_000));
+          const r = await cli({ model, prompt: text.join("\n"), images, schema, timeoutMs });
+          return { data: r.data as never, usage: { inputTokens: r.inputTokens, outputTokens: r.outputTokens, totalTokens: r.inputTokens + r.outputTokens } };
+        },
+      });
+    } else if (provider === "gemini") {
       const gemini = await geminiFor(ctx, userId).catch(() => null);
       if (!gemini) continue;
       out.push({
@@ -56,7 +89,7 @@ async function candidates(ctx: Ctx, userId: string, settings: UserSettings): Pro
     }
   }
   if (out.length === 0) {
-    throw new StepError("Nenhuma IA de texto configurada: salve a chave do Gemini ou do Groq em Integrações", "config");
+    throw new StepError("Nenhuma IA de texto disponível: configure o Claude (assinatura), o Gemini ou o Groq em Integrações", "config");
   }
   return out;
 }
@@ -66,7 +99,7 @@ async function track(ctx: Ctx, job: Job, settings: UserSettings, c: Candidate, u
     await trackGemini(ctx, job, settings, "gemini_text", c.model, usage, false, { images: 0 });
     return;
   }
-  // Groq's free tier costs nothing; paid Groq prices are not tracked here.
+  // Claude runs on the user's subscription and Groq's free tier costs nothing.
   await ctx.repo.recordUsage({
     user_id: job.user_id, job_id: job.id, provider: c.provider, kind: `${c.provider}_text`, model: c.model,
     input_tokens: usage.inputTokens, output_tokens: usage.outputTokens, cost_usd: 0,

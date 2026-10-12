@@ -10,9 +10,9 @@ export interface RunResult {
   stderr: string;
 }
 
-export function run(cmd: string, args: string[], opts: { timeoutMs?: number; input?: Buffer } = {}): Promise<RunResult> {
+export function run(cmd: string, args: string[], opts: { timeoutMs?: number; input?: Buffer; cwd?: string } = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], cwd: opts.cwd });
     const out: Buffer[] = [];
     let err = "";
     const timer = opts.timeoutMs ? setTimeout(() => p.kill("SIGKILL"), opts.timeoutMs) : null;

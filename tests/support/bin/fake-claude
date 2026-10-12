@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+// Stand-in for the Claude Code CLI in tests: checks the arguments the worker
+// passes and answers like `claude -p --output-format json --json-schema`.
+import fs from "node:fs";
+const args = process.argv.slice(2);
+const opt = (name) => args[args.indexOf(name) + 1];
+const prompt = fs.readFileSync(0, "utf8");
+if (process.env.FAKE_CLAUDE_MODE === "limit") {
+  process.stdout.write(JSON.stringify({ type: "result", is_error: true, result: "Claude AI usage limit reached|1760000000" }));
+  process.exit(1);
+}
+const images = [...prompt.matchAll(/^- (imagem-\d+\.jpg)$/gm)].map((m) => m[1]);
+const missing = images.filter((f) => !fs.existsSync(f));
+const schema = JSON.parse(opt("--json-schema"));
+const out = {
+  args: { p: args.includes("-p"), format: opt("--output-format"), model: opt("--model"), tools: opt("--tools"), allowed: opt("--allowedTools") },
+  images, missing, required: schema.required,
+};
+process.stdout.write(JSON.stringify({ type: "result", is_error: false, result: "ok", structured_output: out, usage: { input_tokens: 100, output_tokens: 20 } }));

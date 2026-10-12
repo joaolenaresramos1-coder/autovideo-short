@@ -1,10 +1,12 @@
-// Groq as a text AI besides Gemini, and the order in which they are tried.
-// The key goes to the server (encrypted there) and never comes back.
+// Text AIs: Claude (the user's subscription, run by Claude Code on the GitHub
+// worker), Gemini and Groq, and the order in which they are tried. Keys go to
+// the server or to GitHub secrets (encrypted) and never come back.
 
 import { useState } from "react";
 import { api, supabase } from "./supabase.ts";
 import { rows, useQuery } from "./hooks.ts";
 import { Badge, Card, Field, fmtDate } from "./ui.tsx";
+import { guessRepo, sealer, secretExists } from "./serverSetup.tsx";
 
 type Alt = "groq";
 const INFO: Record<Alt, { label: string; hint: string; placeholder: string; about: string }> = {
@@ -15,7 +17,12 @@ const INFO: Record<Alt, { label: string; hint: string; placeholder: string; abou
     about: "Plano gratuito com limites diários próprios. Para analisar imagens escolha um modelo com visão (ex.: Llama 4 Scout/Maverick). Até 5 imagens por pedido.",
   },
 };
-const NAMES: Record<string, string> = { gemini: "Gemini", groq: "Groq" };
+const NAMES: Record<string, string> = { claude: "Claude (sua assinatura)", gemini: "Gemini", groq: "Groq" };
+const CLAUDE_MODELS = [
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5 (mais capaz)" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (gasta menos do limite)" },
+  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5 (mais rápido)" },
+];
 
 interface Row {
   provider: string;
@@ -26,22 +33,27 @@ interface Row {
 interface Settings {
   text_provider_order: string[] | null;
   groq_text_model: string | null;
+  claude_model: string | null;
 }
 
 export function TextAIs({ onToast }: { onToast: (ok: boolean, msg: string) => void }) {
   const q = useQuery(async () => {
     const [ints, settings] = await Promise.all([
       rows(supabase.from("integrations").select("provider, status, account_name, metadata").in("provider", ["gemini", "groq"])) as Promise<Row[]>,
-      supabase.from("user_settings").select("text_provider_order, groq_text_model").maybeSingle(),
+      supabase.from("user_settings").select("text_provider_order, groq_text_model, claude_model").maybeSingle(),
     ]);
-    return { ints, settings: (settings.data ?? { text_provider_order: null, groq_text_model: null }) as Settings };
+    return { ints, settings: (settings.data ?? { text_provider_order: null, groq_text_model: null, claude_model: null }) as Settings };
   });
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [reply, setReply] = useState<Record<string, string>>({});
 
-  const order = [...new Set([...(q.data?.settings.text_provider_order ?? []), "gemini", "groq"])].filter((p) => p in NAMES);
+  const order = [...new Set([...(q.data?.settings.text_provider_order ?? []), "claude", "gemini", "groq"])].filter((p) => p in NAMES);
   const connected = (p: string) => q.data?.ints.find((i) => i.provider === p && i.status === "connected");
+  const [claudeToken, setClaudeToken] = useState("");
+  const [ghToken, setGhToken] = useState("");
+  const [claudeSaved, setClaudeSaved] = useState<boolean | null>(null);
+  const repo = guessRepo();
 
   async function act(label: string, fn: () => Promise<string>) {
     setBusy(label);
@@ -78,7 +90,7 @@ export function TextAIs({ onToast }: { onToast: (ok: boolean, msg: string) => vo
           <div className="list">
             {order.map((p, i) => (
               <div key={p} className="spread">
-                <span><strong>{i + 1}.</strong> {NAMES[p]} {connected(p) ? <Badge tone="good">chave salva</Badge> : <Badge>sem chave</Badge>}</span>
+                <span><strong>{i + 1}.</strong> {NAMES[p]} {p === "claude" ? <Badge tone="info">token no GitHub</Badge> : connected(p) ? <Badge tone="good">chave salva</Badge> : <Badge>sem chave</Badge>}</span>
                 <span className="row">
                   <button className="small" aria-label={`Subir ${NAMES[p]}`} disabled={i === 0 || !!busy} onClick={() => move(i, -1)}>↑</button>
                   <button className="small" aria-label={`Descer ${NAMES[p]}`} disabled={i === order.length - 1 || !!busy} onClick={() => move(i, 1)}>↓</button>
@@ -86,6 +98,54 @@ export function TextAIs({ onToast }: { onToast: (ok: boolean, msg: string) => vo
               </div>
             ))}
           </div>
+        </div>
+      </Card>
+
+      <Card title="Claude (sua assinatura Pro/Max)">
+        <div className="stack">
+          <p className="small muted">
+            Faz a análise das páginas e o roteiro usando a sua assinatura do Claude, sem chave de API paga. Roda no worker do GitHub com o Claude Code e conta nos limites de uso do seu plano.
+            Se o limite acabar, a tarefa passa para a próxima IA da lista (ou espera). A voz continua no Gemini.
+          </p>
+          <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>
+            <li>Em um computador (ou num Codespace do GitHub pelo navegador), instale o Claude Code e rode <code>claude setup-token</code>. Entre com a sua conta do Claude e copie o token gerado.</li>
+            <li>Cole o token abaixo junto com um token do GitHub com permissão de <b>Secrets: escrita</b> neste repositório ({repo.owner}/{repo.name}).</li>
+            <li>Na lista acima, coloque <b>Claude</b> em 1º lugar.</li>
+          </ol>
+          <form className="stack" onSubmit={(e) => {
+            e.preventDefault();
+            act("claude", async () => {
+              const seal = await sealer(ghToken, repo);
+              await seal("CLAUDE_CODE_OAUTH_TOKEN", claudeToken.trim());
+              setClaudeToken("");
+              setClaudeSaved(true);
+              return "Token do Claude salvo como segredo do GitHub (CLAUDE_CODE_OAUTH_TOKEN)";
+            });
+          }}>
+            <Field label="Token do Claude (claude setup-token)">
+              <input type="password" autoComplete="off" value={claudeToken} onChange={(e) => setClaudeToken(e.target.value)} placeholder="sk-ant-oat01-…" />
+            </Field>
+            <Field label="Token do GitHub" hint="Fine-grained token: este repositório → Secrets: Read and write. Não fica salvo.">
+              <input type="password" autoComplete="off" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder="github_pat_…" />
+            </Field>
+            <div className="row">
+              <button className="primary" disabled={!claudeToken || !ghToken || busy === "claude"}>Salvar token no GitHub</button>
+              <button type="button" disabled={!ghToken || !!busy} onClick={() => act("claude-check", async () => {
+                const ok = await secretExists(ghToken, repo, "CLAUDE_CODE_OAUTH_TOKEN");
+                setClaudeSaved(ok);
+                return ok ? "Token do Claude encontrado no GitHub" : "Token do Claude ainda não está no GitHub";
+              })}>Verificar</button>
+            </div>
+          </form>
+          {claudeSaved !== null && <span className="small">{claudeSaved ? "✓ Token configurado no GitHub." : "Token não encontrado."}</span>}
+          <Field label="Modelo do Claude">
+            <select value={q.data?.settings.claude_model ?? "claude-opus-5-5"} disabled={!!busy} onChange={(e) => act("claude-model", async () => {
+              await saveSettings({ claude_model: e.target.value });
+              return `Modelo do Claude: ${e.target.value}`;
+            })}>
+              {CLAUDE_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </Field>
         </div>
       </Card>
 

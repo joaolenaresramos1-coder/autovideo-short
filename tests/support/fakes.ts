@@ -252,5 +252,5 @@ export function createFakeFetch(opts: FakeOptions = {}) {
     }
     return new Response(`fake: rota não mapeada ${method} ${url}`, { status: 404 });
   };
-  return { fetchFn, stats, routes, control };
+  return { fetchFn, stats, routes, control, answer };
 }
