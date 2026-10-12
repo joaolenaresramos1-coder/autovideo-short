@@ -195,7 +195,17 @@ export async function fetchMaterial(ctx: Ctx, job: Job): Promise<StepOutcome> {
     const bytes = await readFile(p.file);
     await ctx.blobs.put(path, bytes, "image/jpeg");
     await ctx.repo.registerObject(job.user_id, job.id, path, "image", bytes.length, "image/jpeg");
-    return { id: p.id, path, width: p.width, height: p.height, page: p.page };
+    // small copy for the AI analysis: faster requests, fewer tokens
+    const small = join(dir, `${p.id}-thumb.jpg`);
+    let thumb: string | undefined;
+    const t = await run("ffmpeg", ["-v", "error", "-y", "-i", p.file, "-vf", "scale='min(512,iw)':-2", "-frames:v", "1", "-q:v", "5", small], { timeoutMs: 60_000 });
+    if (t.code === 0) {
+      thumb = jobPath(job, `thumbs/${p.id}.jpg`);
+      const tb = await readFile(small);
+      await ctx.blobs.put(thumb, tb, "image/jpeg");
+      await ctx.repo.registerObject(job.user_id, job.id, thumb, "image", tb.length, "image/jpeg");
+    }
+    return { id: p.id, path, width: p.width, height: p.height, page: p.page, thumb };
   });
   console.log(`[fetching ${job.id}] ${panels.length} quadro(s) prontos em ${Math.round((Date.now() - t0) / 1000)}s`);
   if (panels.length === 0 && texts.length === 0) {

@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, ApiFailure, supabase } from "../supabase.ts";
 import { rows, useQuery, useToast } from "../hooks.ts";
 import { Badge, Card, ErrorBox, Field, fmtDate, Page, Toast } from "../ui.tsx";
+import { TextAIs } from "../aiProviders.tsx";
 
 interface Integration {
   provider: string;
@@ -68,7 +69,7 @@ export default function Integrations() {
     <Page title="Integrações">
       <ErrorBox error={q.error} />
       <div className="stack">
-        <Card title={<span className="spread">Gemini (roteiro e narração) {gemini && <Badge tone={STATUS[gemini.status]?.tone}>{STATUS[gemini.status]?.label}</Badge>}</span>}>
+        <Card title={<span className="spread">Gemini (análise, roteiro e narração) {gemini && <Badge tone={STATUS[gemini.status]?.tone}>{STATUS[gemini.status]?.label}</Badge>}</span>}>
           <div className="stack">
             <p className="small muted">A chave fica cifrada no servidor e nunca volta para o navegador. Ela é validada junto ao Google antes de ser salva.</p>
             {gemini?.account_name && <span className="small">Chave atual: {gemini.account_name} · verificada {fmtDate(gemini.metadata.checked_at)}</span>}
@@ -90,6 +91,8 @@ export default function Integrations() {
             {test && <pre className="mono pre small">{JSON.stringify(test, null, 2)}</pre>}
           </div>
         </Card>
+
+        <TextAIs onToast={(ok, msg) => (ok ? toast.ok(msg) : toast.fail(msg))} />
 
         {(["youtube", "tiktok"] as const).map((p) => {
           const i = by(p);

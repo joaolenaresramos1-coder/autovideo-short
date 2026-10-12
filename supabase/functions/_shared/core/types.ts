@@ -117,6 +117,9 @@ export interface UserSettings {
   youtube_privacy: "private" | "unlisted" | "public";
   tiktok_privacy: string;
   ai_disclosure: boolean;
+  /** order in which text AIs are tried: gemini, groq */
+  text_provider_order?: string[];
+  groq_text_model?: string | null;
 }
 
 export interface CaptionStyle {
@@ -142,6 +145,8 @@ export interface Panel {
   width: number;
   height: number;
   page?: number;
+  /** smaller copy sent to the AI for analysis */
+  thumb?: string;
 }
 
 export interface ScriptSegment {

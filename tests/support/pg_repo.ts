@@ -137,6 +137,10 @@ export class PgRepo implements Repo {
     for (const k of ["daily_cost_limit_usd", "monthly_cost_limit_usd"]) r[k] = Number(r[k]);
     return r as unknown as UserSettings;
   }
+  async updateSettings(userId: string, patch: Record<string, unknown>) {
+    const s = updateSql("user_settings", patch, "user_id = $1", [userId]);
+    await this.db.query(s.text, s.values);
+  }
   async activeSchedules() {
     return (await this.q("select *, to_char(time_of_day, 'HH24:MI') as time_of_day, starts_on::text, ends_on::text from schedules where active")).map((r) => {
       r.cost_limit_usd = Number(r.cost_limit_usd);

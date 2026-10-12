@@ -103,7 +103,7 @@ export interface Publication {
 export interface Integration {
   id: string;
   user_id: string;
-  provider: "youtube" | "tiktok" | "gemini" | "shotstack";
+  provider: "youtube" | "tiktok" | "gemini" | "shotstack" | "groq";
   status: "connected" | "expired" | "error" | "disconnected";
   account_id: string | null;
   account_name: string | null;
@@ -171,6 +171,7 @@ export interface Repo {
   updateWork(id: string, patch: Partial<Work> & { last_checked_at?: string; next_check_at?: string }): Promise<void>;
   worksDueForCheck(limit: number): Promise<Work[]>;
   getSettings(userId: string): Promise<UserSettings>;
+  updateSettings(userId: string, patch: Partial<UserSettings> | Record<string, unknown>): Promise<void>;
   activeSchedules(): Promise<Schedule[]>;
   markMaterialized(scheduleId: string, until: string): Promise<void>;
   upsertChapters(userId: string, workId: string, chapters: ChapterInfo[]): Promise<number>;

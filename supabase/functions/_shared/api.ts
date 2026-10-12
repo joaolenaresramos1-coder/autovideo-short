@@ -8,7 +8,8 @@ import { chapterNumberFrom } from "./connectors/types.ts";
 import { connectorFor } from "./connectors/index.ts";
 import { GeminiClient, inferCapabilities } from "./adapters/gemini.ts";
 import { authorizeUrl, type OAuthProvider } from "./adapters/oauth.ts";
-import { type Ctx, dispatchWorker, geminiFor, oauthConfig, putUserSecret } from "./pipeline/context.ts";
+import { type Ctx, dispatchWorker, geminiFor, getUserSecret, oauthConfig, putUserSecret } from "./pipeline/context.ts";
+import { ALT_PROVIDERS, type AltProvider, looksVision, OpenAICompatClient } from "./adapters/openai_compat.ts";
 
 export class ApiError extends Error {
   status: number;
@@ -85,6 +86,53 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
       });
       return { ok: true, tts_models: tts, text_models: text };
     }
+    case "save_ai_key": {
+      // Groq: check the key by listing its models, then store it encrypted.
+      const provider = str(body, "provider", 10) as AltProvider;
+      if (!(provider in ALT_PROVIDERS)) throw new ApiError("IA inválida");
+      const key = str(body, "key", 300);
+      const client = new OpenAICompatClient(provider, key, ctx.fetch);
+      let models: string[];
+      try {
+        models = await client.listModels();
+      } catch (e) {
+        throw new ApiError(`Chave recusada pelo ${client.label}: ${redact((e as Error).message)}`, 400);
+      }
+      await putUserSecret(ctx, userId, `${provider}_api_key`, key);
+      const vision = models.filter(looksVision);
+      const settings = await repo.getSettings(userId);
+      const current = settings.groq_text_model;
+      const model = current && models.includes(current) ? current : (vision[0] ?? models[0] ?? null);
+      await repo.updateSettings(userId, { groq_text_model: model });
+      await repo.upsertIntegration({
+        user_id: userId, provider, status: "connected", account_id: null, account_name: `Chave …${key.slice(-4)}`,
+        scopes: [], token_expires_at: null, metadata: { text_models: models.slice(0, 120), vision_models: vision.slice(0, 60), checked_at: ctx.now().toISOString() },
+        last_error: null,
+      });
+      return { ok: true, models, vision_models: vision, model };
+    }
+    case "test_ai": {
+      // One tiny real request to the chosen text AI.
+      const provider = str(body, "provider", 10);
+      const settings = await repo.getSettings(userId);
+      const schema = { type: "object", properties: { ok: { type: "boolean" }, frase: { type: "string" } }, required: ["ok", "frase"] };
+      const parts = [{ text: "Teste de conexão. Responda em JSON com ok=true e uma frase curta em português." }];
+      try {
+        if (provider === "gemini") {
+          const r = await (await geminiFor(ctx, userId)).generateJson<{ frase: string }>(settings.gemini_text_model, parts, schema, { timeoutMs: 40_000, quick: true });
+          return { provider, model: settings.gemini_text_model, reply: r.data.frase };
+        }
+        if (!(provider in ALT_PROVIDERS)) throw new ApiError("IA inválida");
+        const key = await getUserSecret(ctx, userId, `${provider}_api_key`);
+        const model = settings.groq_text_model;
+        if (!key || !model) throw new ApiError("Salve a chave e escolha o modelo primeiro");
+        const r = await new OpenAICompatClient(provider as AltProvider, key, ctx.fetch).generateJson<{ frase: string }>(model, parts, schema, { timeoutMs: 40_000 });
+        return { provider, model, reply: r.data.frase };
+      } catch (e) {
+        if (e instanceof ApiError) throw e;
+        throw new ApiError(redact((e as Error).message), 502);
+      }
+    }
     case "test_gemini": {
       const settings = await repo.getSettings(userId);
       const client = await geminiFor(ctx, userId);
@@ -107,8 +155,8 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
     }
     case "disconnect": {
       const provider = str(body, "provider", 20);
-      if (!["youtube", "tiktok", "gemini"].includes(provider)) throw new ApiError("Integração inválida");
-      await repo.deleteSecret(userId, provider === "gemini" ? "gemini_api_key" : `oauth:${provider}`);
+      if (!["youtube", "tiktok", "gemini", "groq"].includes(provider)) throw new ApiError("Integração inválida");
+      await repo.deleteSecret(userId, ["gemini", "groq"].includes(provider) ? `${provider}_api_key` : `oauth:${provider}`);
       await repo.updateIntegration(userId, provider as "youtube", { status: "disconnected" });
       return { ok: true };
     }

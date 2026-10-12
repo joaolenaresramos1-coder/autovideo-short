@@ -345,3 +345,68 @@ describe("manual generation from a chapter link", () => {
     expect(again.job_id).not.toBe(r.job_id);
   });
 });
+
+describe("Gemini out of free quota", () => {
+  it("Groq takes over analysis, script and review; the narration stays on Gemini", { timeout: 900_000 }, async () => {
+    const saved = (await handleApi(edge(), user, { action: "save_ai_key", provider: "groq", key: "test-groq-key" })) as { model: string };
+    expect(saved.model).toBe("meta-llama/llama-4-scout-17b-16e-instruct"); // reads images
+    await expect(handleApi(edge(), user, { action: "save_ai_key", provider: "groq", key: "wrong" })).rejects.toThrow(/Chave recusada pelo Groq/);
+
+    const pages = ["a", "b", "c"].map((n, i) => {
+      const f = join(dir, `quota-${n}.png`);
+      makeImage(f, ["testsrc2", "mandelbrot", "rgbtestsrc"][i], "720x2400");
+      return readFileSync(f);
+    });
+    const chapterUrl = "https://scan.example/obra-y/capitulo-3/";
+    fake.routes.set(chapterUrl, () => new Response(
+      `<div>${pages.map((_, i) => `<img src="https://cdn.scan.example/y3/${i + 1}.png">`).join("")}</div>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    ));
+    pages.forEach((bytes, i) => fake.routes.set(`https://cdn.scan.example/y3/${i + 1}.png`, () => new Response(bytes, { status: 200 })));
+
+    fake.control.geminiTextDown = true;
+    try {
+      const before = { ...fake.stats.calls };
+      const r = (await handleApi(edge(), user, { action: "generate_now", title: "Cota esgotada", chapter_url: chapterUrl, platforms: [] })) as { job_id: string };
+      await runTick(edge());
+      await drainQueue(worker(), "worker", WORKER_HANDLERS);
+      const panels = ((await repo.getStep(r.job_id, "fetching"))!.output as { panels: { thumb?: string }[] }).panels;
+      expect(panels.length).toBeGreaterThan(5);
+      expect(panels.every((p) => p.thumb)).toBe(true);
+      await runTick(edge());
+      const j = await jobRow(r.job_id);
+      expect(j.state, j.last_error ?? "").toBe("rendering");
+      const delta = (k: string) => (fake.stats.calls[k] ?? 0) - (before[k] ?? 0);
+      expect(delta("groq_analysis")).toBeGreaterThanOrEqual(2); // at most 5 images per request
+      expect(delta("groq_script")).toBeGreaterThanOrEqual(1);
+      expect(delta("groq_review")).toBeGreaterThanOrEqual(1);
+      expect(delta("gemini_analysis")).toBe(0);
+      expect(delta("gemini_tts")).toBeGreaterThan(0);
+      const log = (await db.admin.query("select message from job_logs where job_id = $1 and event = 'ai_fallback' limit 1", [r.job_id])).rows[0];
+      expect(log.message).toMatch(/Usando groq/);
+      expect(log.message).toMatch(/cota grátis esgotada/);
+      const used = (await db.admin.query("select provider, count(*)::int n from usage_events where job_id = $1 group by provider", [r.job_id])).rows;
+      expect(used.find((u) => u.provider === "groq")?.n).toBeGreaterThanOrEqual(4);
+    } finally {
+      fake.control.geminiTextDown = false;
+    }
+  });
+
+  it("with no other AI the job waits for the quota instead of failing", { timeout: 900_000 }, async () => {
+    await handleApi(edge(), user, { action: "disconnect", provider: "groq" });
+    fake.control.geminiTextDown = true;
+    try {
+      const r = (await handleApi(edge(), user, { action: "generate_now", work_id: (await db.admin.query("select id from works where title = 'Cota esgotada'")).rows[0].id, chapter_key: "3" })) as { job_id: string };
+      await runTick(edge());
+      await drainQueue(worker(), "worker", WORKER_HANDLERS);
+      await runTick(edge());
+      const j = await jobRow(r.job_id);
+      expect(j.state).toBe("retry_wait");
+      expect(j.attempts).toBe(0);
+      expect(j.waiting_reason).toMatch(/cota grátis esgotada.*libera em ~20 h 60 min|cota grátis esgotada.*libera em ~21 h/);
+      expect(new Date(j.next_attempt_at).getTime() - Date.now()).toBeGreaterThan(20 * 3600_000);
+    } finally {
+      fake.control.geminiTextDown = false;
+    }
+  });
+});

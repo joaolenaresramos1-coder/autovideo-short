@@ -18,6 +18,7 @@ import { connectorFor } from "../connectors/index.ts";
 import {
   type Ctx, ensureAllowed, geminiFor, jobPath, remainingMs, trackGemini,
 } from "./context.ts";
+import { generateJsonAny, ImageLimitError } from "./llm.ts";
 import type { StepOutcome } from "./runner.ts";
 
 // ------------------------------------------------------------------ shared types
@@ -55,7 +56,14 @@ export interface ChapterAnalysis {
   summaries: string[];
 }
 
-const BATCH = 6;
+const BATCH = 12;
+/** At most this many images are analysed per chapter (evenly spread). */
+const MAX_ANALYSED = 60;
+
+export function sampleEvenly<T>(items: T[], max: number): T[] {
+  if (items.length <= max) return items;
+  return Array.from({ length: max }, (_, i) => items[Math.floor((i * items.length) / max)]);
+}
 
 async function load(ctx: Ctx, job: Job): Promise<{ work: Work; settings: UserSettings; chapter: Chapter | null }> {
   const work = await ctx.repo.getWork(job.work_id);
@@ -151,7 +159,6 @@ export async function analyze(ctx: Ctx, job: Job): Promise<StepOutcome> {
   if (!fetched) throw new StepError("Material do capítulo ausente (etapa de obtenção não concluída)", "permanent");
   const prev = (await ctx.repo.getStep(job.id, "analyzing"))?.output as AnalysisState | undefined;
   const state: AnalysisState = prev?.batches ? prev : { next: 0, batches: [] };
-  const gemini = await geminiFor(ctx, job.user_id);
   const model = settings.gemini_text_model;
   const memory = memoryContext(await ctx.repo.getMemory(work.id), 6000);
   const label = chapterLabel(chapter, job);
@@ -162,17 +169,16 @@ export async function analyze(ctx: Ctx, job: Job): Promise<StepOutcome> {
     for (const t of fetched.texts) texts.push(`### ${t.name}\n${new TextDecoder().decode(await ctx.blobs.get(t.path)).slice(0, 60_000)}`);
     const body = texts.join("\n\n").slice(0, 120_000);
     await ensureAllowed(ctx, job, "gemini_text", estimateBeforeCall("gemini_text", model, { inputChars: body.length }, settings.gemini_tier, settings.price_overrides));
-    const r = await gemini.generateJson<AnalysisBatch>(model, [
+    const r = await generateJsonAny<AnalysisBatch>(ctx, job, settings, [
       { text: textAnalysisPrompt({ workTitle: work.title, workType: work.type, chapterLabel: label, memory }) },
       { text: body },
-    ], ANALYSIS_SCHEMA);
-    await trackGemini(ctx, job, settings, "gemini_text", model, r.usage);
+    ], ANALYSIS_SCHEMA, { timeoutMs: Math.min(110_000, remainingMs(ctx) - 5_000) });
     state.batches.push({ panels: [], events: r.data.events ?? [], batch_summary: r.data.batch_summary ?? "" });
     state.textDone = true;
     await ctx.repo.saveStep(job.id, "analyzing", "running", state);
   }
 
-  const panels = fetched.panels;
+  const panels = sampleEvenly(fetched.panels, MAX_ANALYSED);
   while (state.next < panels.length) {
     if (remainingMs(ctx) < 85_000) {
       return { stay: true, output: state, reason: `Análise parcial: ${state.next}/${panels.length} imagens` };
@@ -191,19 +197,23 @@ export async function analyze(ctx: Ctx, job: Job): Promise<StepOutcome> {
     }];
     for (const p of batch) {
       parts.push({ text: `Painel ${p.id}:` });
-      parts.push(imagePart(await ctx.blobs.get(p.path), "image/jpeg"));
+      parts.push(imagePart(await ctx.blobs.get(p.thumb ?? p.path), "image/jpeg"));
     }
     await ensureAllowed(ctx, job, "gemini_text", estimateBeforeCall("gemini_text", model, { images: batch.length, inputChars: 4000 }, settings.gemini_tier, settings.price_overrides));
     let r;
     try {
-      r = await gemini.generateJson<AnalysisBatch>(model, parts, ANALYSIS_SCHEMA, { timeoutMs: Math.min(110_000, remainingMs(ctx) - 5_000), quick: true });
+      r = await generateJsonAny<AnalysisBatch>(ctx, job, settings, parts, ANALYSIS_SCHEMA, { timeoutMs: Math.min(110_000, remainingMs(ctx) - 5_000), quick: true });
     } catch (e) {
+      if (e instanceof ImageLimitError) {
+        // the AI that can answer now takes fewer images per request
+        state.size = e.max;
+        continue;
+      }
       if (!isTimeout(e) || size <= 1) throw e;
-      // Gemini took too long for this many images: try again soon with fewer
+      // the AI took too long for this many images: try again soon with fewer
       state.size = Math.max(1, Math.floor(size / 2));
-      return { stay: true, delaySeconds: 5, output: state, reason: `Gemini demorou; analisando ${state.size} imagem(ns) por vez` };
+      return { stay: true, delaySeconds: 5, output: state, reason: `A IA demorou; analisando ${state.size} imagem(ns) por vez` };
     }
-    await trackGemini(ctx, job, settings, "gemini_text", model, r.usage, false, { images: 0 });
     const known = new Set(batch.map((p) => p.id));
     state.batches.push({
       panels: (r.data.panels ?? []).filter((p) => known.has(p.id)),
@@ -269,7 +279,6 @@ export async function writeScript(ctx: Ctx, job: Job): Promise<StepOutcome> {
     analysisBlock = ["Resumos de capítulos já processados:", ...done.reverse().map((c) => `- ${chapterLabel(c, job)}: ${c.summary ?? ""}`)].join("\n");
   }
 
-  const gemini = await geminiFor(ctx, job.user_id);
   const model = settings.gemini_text_model;
   const target = job.target_duration_seconds;
   const words = audioStep?.rewrite?.targetWords ?? targetWords(target);
@@ -295,8 +304,7 @@ export async function writeScript(ctx: Ctx, job: Job): Promise<StepOutcome> {
       feedback,
     });
     await ensureAllowed(ctx, job, "gemini_text", estimateBeforeCall("gemini_text", model, { inputChars: prompt.length }, settings.gemini_tier, settings.price_overrides));
-    const r = await gemini.generateJson<ScriptAI>(model, [{ text: prompt }], SCRIPT_SCHEMA, { timeoutMs: Math.min(90_000, remainingMs(ctx) - 5_000) });
-    await trackGemini(ctx, job, settings, "gemini_text", model, r.usage);
+    const r = await generateJsonAny<ScriptAI>(ctx, job, settings, [{ text: prompt }], SCRIPT_SCHEMA, { timeoutMs: Math.min(90_000, remainingMs(ctx) - 5_000) });
     ai = r.data;
     script = normalizeScript(r.data, usablePanels);
     const issues = validateScript(script, { targetSeconds: target, sourceDialogues: dialogues, requirePanels: usablePanels.length > 0 });
@@ -310,8 +318,7 @@ export async function writeScript(ctx: Ctx, job: Job): Promise<StepOutcome> {
     if (remainingMs(ctx) < 30_000) throw new StepError("Tempo da função esgotado antes da revisão", "retryable", 30);
     const rp = reviewPrompt({ script: scriptText(script), analysis: analysisBlock, memory });
     await ensureAllowed(ctx, job, "gemini_text", estimateBeforeCall("gemini_text", model, { inputChars: rp.length, outputTokens: 2000 }, settings.gemini_tier, settings.price_overrides));
-    const rv = await gemini.generateJson<Review>(model, [{ text: rp }], REVIEW_SCHEMA, { timeoutMs: Math.min(60_000, remainingMs(ctx) - 5_000) });
-    await trackGemini(ctx, job, settings, "gemini_text", model, rv.usage);
+    const rv = await generateJsonAny<Review>(ctx, job, settings, [{ text: rp }], REVIEW_SCHEMA, { timeoutMs: Math.min(60_000, remainingMs(ctx) - 5_000) });
     const current: Review = rv.data;
     review = current;
     const high = (current.issues ?? []).filter((i) => i.severity === "high");
