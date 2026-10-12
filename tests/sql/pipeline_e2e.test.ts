@@ -449,3 +449,44 @@ describe("Claude subscription first", () => {
     }
   });
 });
+
+describe("expired panels", () => {
+  it("a job whose panels were cleaned up fetches the pages again instead of failing forever", { timeout: 900_000 }, async () => {
+    const workId = (await db.admin.query("select id from works where title = 'Cota esgotada'")).rows[0].id;
+    const r = (await handleApi(edge(), user, { action: "generate_now", work_id: workId, chapter_key: "3" })) as { job_id: string };
+    await runTick(edge());
+    await drainQueue(worker(), "worker", WORKER_HANDLERS);
+    expect((await jobRow(r.job_id)).state).toBe("analyzing");
+
+    // the job failed and sat long enough for the cleanup to remove its panels
+    await db.admin.query("update jobs set state = 'failed', resume_state = 'analyzing', locked_by = null, locked_until = null where id = $1", [r.job_id]);
+    const panels = (await db.admin.query("select id, path from storage_objects where job_id = $1 and path like '%/panels/%'", [r.job_id])).rows;
+    expect(panels.length).toBeGreaterThan(0);
+    await blobs.remove(panels.map((p) => p.path));
+    await db.admin.query("update storage_objects set deleted_at = now() where job_id = $1 and (path like '%/panels/%' or path like '%/thumbs/%')", [r.job_id]);
+
+    // "Tentar novamente" goes back to fetching the pages
+    const retried = (await handleApi(edge(), user, { action: "job_action", job_id: r.job_id, op: "retry" })) as { state: string };
+    expect(retried.state).toBe("fetching");
+    const log = (await db.admin.query("select 1 from job_logs where job_id = $1 and event = 'material_refetch'", [r.job_id])).rows;
+    expect(log.length).toBe(1);
+    await drainQueue(worker(), "worker", WORKER_HANDLERS);
+    await runTick(edge());
+    const j = await jobRow(r.job_id);
+    expect(j.state, j.last_error ?? "").toBe("rendering");
+
+    // missing panels during the analysis itself: wait, then resume from fetching
+    await db.admin.query("update jobs set state = 'analyzing', locked_by = null, locked_until = null where id = $1", [r.job_id]);
+    await db.admin.query("delete from job_steps where job_id = $1 and step = 'analyzing'", [r.job_id]);
+    const again = (await db.admin.query("select path from storage_objects where job_id = $1 and deleted_at is null and (path like '%/panels/%' or path like '%/thumbs/%')", [r.job_id])).rows;
+    await blobs.remove(again.map((p) => p.path));
+    await db.admin.query("update storage_objects set deleted_at = now() where job_id = $1 and (path like '%/panels/%' or path like '%/thumbs/%')", [r.job_id]);
+    await runTick(edge());
+    const waiting = await jobRow(r.job_id);
+    expect(waiting.state).toBe("retry_wait");
+    expect(waiting.last_error).toMatch(/expiraram no servidor/);
+    await db.admin.query("update jobs set next_attempt_at = now() - interval '1 second' where id = $1", [r.job_id]);
+    await repo.promoteDueJobs();
+    expect((await jobRow(r.job_id)).state).toBe("fetching");
+  });
+});

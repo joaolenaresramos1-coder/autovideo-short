@@ -394,7 +394,11 @@ export class FsBlobs implements Blobs {
       this.failNextGet.delete(path);
       throw new Error(`falha simulada ao ler ${path}`);
     }
-    return new Uint8Array(await readFile(join(this.root, path)));
+    try {
+      return new Uint8Array(await readFile(join(this.root, path)));
+    } catch {
+      throw new Error(`Storage download ${path}: Object not found`); // same text as Supabase Storage
+    }
   }
   async signedUrl(path: string, ttl: number) {
     return `file://${join(this.root, path)}?ttl=${ttl}`;

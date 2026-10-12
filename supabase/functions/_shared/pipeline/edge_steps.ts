@@ -60,6 +60,17 @@ const BATCH = 12;
 /** At most this many images are analysed per chapter (evenly spread). */
 const MAX_ANALYSED = 60;
 
+/** Panel image for the AI; when the cleanup removed it, the pages are fetched again. */
+async function panelBytes(ctx: Ctx, p: Panel): Promise<Uint8Array> {
+  try {
+    return await ctx.blobs.get(p.thumb ?? p.path);
+  } catch (e) {
+    if (!/not found|não encontrad/i.test((e as Error).message)) throw e;
+    // the retry resumes from "fetching" (see resume_point in the database)
+    throw new StepError("As imagens deste capítulo expiraram no servidor; elas serão buscadas de novo na próxima tentativa.", "retryable", 30);
+  }
+}
+
 export function sampleEvenly<T>(items: T[], max: number): T[] {
   if (items.length <= max) return items;
   return Array.from({ length: max }, (_, i) => items[Math.floor((i * items.length) / max)]);
@@ -197,7 +208,7 @@ export async function analyze(ctx: Ctx, job: Job): Promise<StepOutcome> {
     }];
     for (const p of batch) {
       parts.push({ text: `Painel ${p.id}:` });
-      parts.push(imagePart(await ctx.blobs.get(p.thumb ?? p.path), "image/jpeg"));
+      parts.push(imagePart(await panelBytes(ctx, p), "image/jpeg"));
     }
     await ensureAllowed(ctx, job, "gemini_text", estimateBeforeCall("gemini_text", model, { images: batch.length, inputChars: 4000 }, settings.gemini_tier, settings.price_overrides));
     let r;
