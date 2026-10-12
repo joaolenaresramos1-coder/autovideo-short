@@ -365,3 +365,13 @@ describe("Claude via assinatura (Claude Code CLI)", async () => {
     }
   });
 });
+
+describe("Gemini alternates", async () => {
+  const { geminiAlternates } = await import("../../supabase/functions/_shared/pipeline/llm.ts");
+  it("tries other Flash text models (lighter first) when the main one runs out", () => {
+    expect(geminiAlternates("gemini-3.8-flash", [
+      "gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-flash-tts", "gemini-3.5-flash", "gemini-3.8-pro", "gemini-nano-banana-2.1", "gemini-3.8-flash-live",
+    ])).toEqual(["gemini-3.8-flash-lite", "gemini-3.5-flash"]);
+    expect(geminiAlternates("x", undefined)).toEqual([]);
+  });
+});

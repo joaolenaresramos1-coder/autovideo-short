@@ -62,7 +62,7 @@ export function createFakeFetch(opts: FakeOptions = {}) {
   const routes = new Map<string, (init: RequestInit) => Response>();
 
   /** Toggles for failure scenarios. */
-  const control = { geminiTextDown: false };
+  const control = { geminiTextDown: false, geminiDownModel: "" };
 
   const answer = (required: string[], allText: string, prefix: string): unknown => {
     let out: unknown;
@@ -171,7 +171,7 @@ export function createFakeFetch(opts: FakeOptions = {}) {
         hit("gemini_image");
         return json({ error: { message: "not in fake" } }, 400);
       }
-      if (control.geminiTextDown) {
+      if (control.geminiTextDown || (control.geminiDownModel && url.includes(`/models/${control.geminiDownModel}:`))) {
         hit("gemini_quota");
         return json({ error: { code: 429, message: "You exceeded your current quota. Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 20h59m43.9s.", status: "RESOURCE_EXHAUSTED" } }, 429);
       }
