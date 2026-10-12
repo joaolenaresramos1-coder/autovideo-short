@@ -60,9 +60,10 @@ describe("render plan", () => {
     const shots = planShots(segments, ranges, panels, 12);
     const total = shots.reduce((a, s) => a + s.duration, 0);
     expect(total).toBeCloseTo(12, 2);
-    expect(Math.max(...shots.map((s) => s.duration))).toBeLessThanOrEqual(3.3);
-    expect(shots.find((s) => s.panelId === "p2")?.motion).toMatch(/pan_(down|up)/);
-    expect(shots.find((s) => s.panelId === "p3")?.motion).toMatch(/pan_(left|right)/);
+    expect(shots.find((s) => s.panelId === "p2")?.motion).toBe("pan_down");
+    expect(shots.find((s) => s.panelId === "p3")?.motion).toBe("pan_right");
+    // the same image never restarts its movement on the next shot
+    for (let i = 1; i < shots.length; i++) expect(shots[i].panelId).not.toBe(shots[i - 1].panelId);
     for (let i = 1; i < shots.length; i++) expect(shots[i].start).toBeCloseTo(shots[i - 1].start + shots[i - 1].duration, 2);
   });
   it("falls back to available panels when a segment has none", () => {
@@ -186,5 +187,41 @@ describe("file size budget", () => {
     const bytes = ((kbps + 160) * 1000 * 180) / 8;
     expect(bytes).toBeLessThan(MAX_FILE_BYTES);
     expect(videoBitrateFor(60)).toBeGreaterThan(kbps);
+  });
+});
+
+describe("render plan: images follow the narration", () => {
+  const pages: Panel[] = [
+    { id: "p001-1", path: "a", width: 1080, height: 1600, page: 1 },
+    { id: "p001-2", path: "b", width: 1080, height: 1600, page: 1 },
+    { id: "p002-1", path: "c", width: 1080, height: 1600, page: 2 },
+  ];
+  it("one continuous shot when consecutive segments show the same image", () => {
+    const segs: ScriptSegment[] = [{ text: "a", panels: ["p002-1"] }, { text: "b", panels: ["p002-1"] }];
+    const shots = planShots(segs, [{ start: 0, end: 2 }, { start: 2, end: 4 }], pages, 4);
+    expect(shots).toHaveLength(1);
+    expect(shots[0]).toMatchObject({ panelId: "p002-1", duration: 4, motion: "zoom_in" });
+  });
+  it("a long segment shows the other slices of the same page, never another scene", () => {
+    const shots = planShots([{ text: "longo", panels: ["p001-1"] }], [{ start: 0, end: 8 }], pages, 8);
+    expect(shots.map((s) => s.panelId)).toEqual(["p001-1", "p001-2"]);
+  });
+  it("a segment without image keeps the one on screen", () => {
+    const segs: ScriptSegment[] = [{ text: "a", panels: ["p002-1"] }, { text: "b", panels: [] }];
+    const shots = planShots(segs, [{ start: 0, end: 2 }, { start: 2, end: 3 }], pages, 3);
+    expect(shots.map((s) => s.panelId)).toEqual(["p002-1"]);
+  });
+  it("missing images are chosen by what is being narrated", () => {
+    const script = {
+      title: "t", description: "d", hashtags: [], hook: "h",
+      segments: [
+        { text: "Ivan encara o conselho.", panels: ["p001-1"] },
+        { text: "A espada de Lia brilha no escuro.", panels: [] },
+      ],
+    };
+    const filled = fillMissingPanels(script as never, pages, {
+      "p001-1": "Ivan diante do conselho", "p001-2": "corredor vazio", "p002-1": "Lia ergue a espada que brilha",
+    });
+    expect(filled.segments[1].panels).toEqual(["p002-1"]);
   });
 });

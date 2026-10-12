@@ -13,22 +13,30 @@ export interface Shot {
 }
 
 export const OUTPUT = { width: 1080, height: 1920, fps: 30 } as const;
-const MAX_SHOT_SECONDS = 3.2;
+const MAX_SHOT_SECONDS = 4.5;
 const MIN_SHOT_SECONDS = 0.6;
 
-function motionFor(panel: Panel | undefined, n: number): Motion {
+/**
+ * One movement per image, always in the same direction for the same kind of
+ * image: tall strips scroll down (reading order), wide panels slide right,
+ * the rest get a slow push-in. No alternating in/out or up/down, which looks
+ * like the image is bouncing back and forth.
+ */
+function motionFor(panel: Panel | undefined): Motion {
   if (panel) {
     const ratio = panel.height / panel.width;
-    if (ratio > (16 / 9) * 1.2) return n % 2 === 0 ? "pan_down" : "pan_up";
-    if (ratio < 1) return n % 2 === 0 ? "pan_right" : "pan_left";
+    if (ratio > (16 / 9) * 1.2) return "pan_down";
+    if (ratio < 1) return "pan_right";
   }
-  return n % 2 === 0 ? "zoom_in" : "zoom_out";
+  return "zoom_in";
 }
 
 /**
- * Build contiguous shots covering [0, duration). Each segment shows its
- * panels in order; long stretches are split so the image keeps moving, like
- * the reference edits (a new shot every 1–3 s).
+ * Build contiguous shots covering [0, duration). Each narration segment shows
+ * the images it names, in order, while it is being spoken. A long segment with
+ * a single image also shows the other slices of the same page (same scene).
+ * The same image on consecutive shots becomes one continuous shot, so the
+ * movement never restarts in the middle.
  */
 export function planShots(
   segments: ScriptSegment[],
@@ -38,28 +46,39 @@ export function planShots(
 ): Shot[] {
   if (panels.length === 0) throw new Error("Nenhuma imagem disponível para o vídeo");
   const byId = new Map(panels.map((p) => [p.id, p]));
-  const shots: Shot[] = [];
-  let fallback = 0;
-  let n = 0;
+  const order = panels.map((p) => p.id);
+  const raw: Omit<Shot, "motion">[] = [];
+  let lastId: string | undefined;
   segments.forEach((seg, i) => {
     const r = ranges[i];
     const len = r.end - r.start;
     if (!(len > 0)) return;
     let ids = seg.panels.filter((id) => byId.has(id));
-    if (ids.length === 0) ids = [panels[fallback++ % panels.length].id];
-    // Number of shots: at least one per panel, enough to keep each under MAX.
-    const count = Math.max(ids.length, Math.ceil(len / MAX_SHOT_SECONDS));
-    const each = len / count;
-    for (let k = 0; k < count; k++) {
-      const id = ids[Math.min(ids.length - 1, Math.floor((k * ids.length) / count))];
-      shots.push({ panelId: id, start: r.start + k * each, duration: each, motion: motionFor(byId.get(id), n++) });
+    // nothing named: keep the image that is on screen (same moment of the story)
+    if (ids.length === 0) ids = [lastId ?? order[0]];
+    const wanted = Math.ceil(len / MAX_SHOT_SECONDS);
+    if (ids.length < wanted) {
+      const extra: string[] = [];
+      for (const id of ids) {
+        const page = byId.get(id)?.page;
+        if (page === undefined) continue;
+        const at = order.indexOf(id);
+        for (const other of order.slice(at + 1)) {
+          if (byId.get(other)?.page !== page) break;
+          if (!ids.includes(other) && !extra.includes(other)) extra.push(other);
+        }
+      }
+      ids = [...ids, ...extra].slice(0, wanted).sort((a, b) => order.indexOf(a) - order.indexOf(b));
     }
+    const each = len / ids.length;
+    ids.forEach((id, k) => raw.push({ panelId: id, start: r.start + k * each, duration: each }));
+    lastId = ids[ids.length - 1];
   });
-  // Merge very short shots into the previous one.
-  const merged: Shot[] = [];
-  for (const s of shots) {
+  // Same image twice in a row: one continuous shot. Very short shots join the previous one.
+  const merged: Omit<Shot, "motion">[] = [];
+  for (const s of raw) {
     const prev = merged[merged.length - 1];
-    if (prev && s.duration < MIN_SHOT_SECONDS) prev.duration += s.duration;
+    if (prev && (prev.panelId === s.panelId || s.duration < MIN_SHOT_SECONDS)) prev.duration += s.duration;
     else merged.push({ ...s });
   }
   // Snap to frames and make sure the plan covers exactly `duration`.
@@ -72,7 +91,7 @@ export function planShots(
     s.duration = Math.max(frame, end - s.start);
     t = s.start + s.duration;
   }
-  return merged.map((s) => ({ ...s, start: round(s.start), duration: round(s.duration) }));
+  return merged.map((s) => ({ ...s, motion: motionFor(byId.get(s.panelId)), start: round(s.start), duration: round(s.duration) }));
 }
 
 function round(n: number): number {
@@ -110,14 +129,19 @@ export function videoBitrateFor(duration: number, maxBytes = MAX_FILE_BYTES): nu
 }
 
 function motionFilter(m: Motion, d: number): string {
-  const { width: W, height: H } = OUTPUT;
+  const { width: W, height: H, fps } = OUTPUT;
   const D = d.toFixed(3);
-  const z = 0.12; // zoom amount over the shot
+  const frames = Math.max(1, Math.round(d * fps));
+  // slow, constant speed: about 2.5% per second, at most 12% per shot
+  const z = Math.min(0.12, 0.025 * d).toFixed(4);
   switch (m) {
     case "zoom_in":
-      return `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},scale=w='trunc(${W}*(1+${z}*t/${D})/2)*2':h=-2:eval=frame,crop=${W}:${H}`;
-    case "zoom_out":
-      return `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},scale=w='trunc(${W}*(1+${z}*(1-t/${D}))/2)*2':h=-2:eval=frame,crop=${W}:${H}`;
+    case "zoom_out": {
+      // zoompan on a 2x copy: sub-pixel steps, so the push-in does not shake
+      const zoom = m === "zoom_in" ? `1+${z}*on/${frames}` : `1+${z}*(1-on/${frames})`;
+      return `scale=${2 * W}:${2 * H}:force_original_aspect_ratio=increase,crop=${2 * W}:${2 * H},` +
+        `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${fps}`;
+    }
     case "pan_down":
       return `scale=${W}:-2,crop=${W}:${H}:0:'(ih-oh)*min(1,t/${D})'`;
     case "pan_up":

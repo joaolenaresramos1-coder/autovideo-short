@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { api, supabase } from "../supabase.ts";
 import { rows, useQuery, useToast } from "../hooks.ts";
 import { Badge, Card, Empty, ErrorBox, fmtDate, Loading, Page, Toast } from "../ui.tsx";
@@ -27,6 +28,18 @@ export default function Videos() {
     60_000,
   );
 
+  const [playing, setPlaying] = useState<Record<string, string>>({});
+
+  async function watch(v: VideoRow) {
+    if (playing[v.id]) return setPlaying(({ [v.id]: _, ...rest }) => rest);
+    try {
+      const r = await api<{ url: string }>("preview_url", { object_id: v.storage_object_id });
+      setPlaying((p) => ({ ...p, [v.id]: r.url }));
+    } catch (e) {
+      toast.fail((e as Error).message);
+    }
+  }
+
   async function download(v: VideoRow) {
     try {
       const r = await api<{ url: string; file_expires_at: string; note: string }>("download_url", { object_id: v.storage_object_id, filename: v.title });
@@ -43,7 +56,7 @@ export default function Videos() {
       <ErrorBox error={q.error} />
       <div className="alert info small" style={{ marginBottom: 12 }}>
         Os vídeos ficam no servidor por tempo limitado: 24 h após o primeiro download (no máximo 48 h após a renderização) ou 48 h se não houver download.
-        O botão de download não confirma que o arquivo foi salvo no seu aparelho — salve-o antes do prazo.
+        O botão de download não confirma que o arquivo foi salvo no seu aparelho — salve-o antes do prazo. Assistir aqui não conta como download.
       </div>
       <div className="list">
         {q.loading && !q.data && <Loading />}
@@ -74,7 +87,22 @@ export default function Videos() {
                     <ul>{v.validation.checks.map((c) => <li key={c.name} className={c.ok ? "check-ok" : "check-bad"}>{c.ok ? "✓" : "✗"} {c.name}: {c.detail}</li>)}</ul>
                   </details>
                 )}
-                {!gone && !expired && v.storage_object_id && <button className="primary" onClick={() => download(v)}>Baixar vídeo</button>}
+                {playing[v.id] && (
+                  <video
+                    src={playing[v.id]}
+                    controls
+                    autoPlay
+                    playsInline
+                    preload="metadata"
+                    style={{ width: "100%", maxWidth: 360, aspectRatio: "9 / 16", background: "#000", borderRadius: 12, alignSelf: "center" }}
+                  />
+                )}
+                {!gone && !expired && v.storage_object_id && (
+                  <div className="row">
+                    <button onClick={() => watch(v)}>{playing[v.id] ? "Fechar vídeo" : "▶ Assistir aqui"}</button>
+                    <button className="primary" onClick={() => download(v)}>Baixar vídeo</button>
+                  </div>
+                )}
               </div>
             </Card>
           );
