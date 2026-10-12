@@ -193,6 +193,10 @@ export function createFakeFetch(opts: FakeOptions = {}) {
       const images = content.filter((c) => c.type === "image_url").length;
       if (images > 5) return json({ error: { message: "Too many images provided. This model supports up to 5 images" } }, 400);
       if (body.response_format?.type !== "json_object") return json({ error: { message: "expected json_object" } }, 400);
+      if (body.max_tokens > 4096) {
+        hit("groq_max_tokens_rejected");
+        return json({ error: { message: "`max_tokens` must be less than or equal to `4096`, the maximum value for `max_tokens` is less than the `context_window` for this model", type: "invalid_request_error", param: "max_tokens" } }, 400);
+      }
       const allText = content.map((c) => c.text ?? "").join("\n");
       const schemaText = /JSON Schema:\n(\{[\s\S]*\})\s*$/.exec(content[0].text ?? "")?.[1] ?? "{}";
       const required: string[] = JSON.parse(schemaText).required ?? [];

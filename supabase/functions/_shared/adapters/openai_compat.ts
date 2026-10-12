@@ -38,6 +38,8 @@ export function looksVision(id: string): boolean {
   return /vision|llama-4|scout|maverick|vl\b|-vl-|pixtral|gemma-3/i.test(id);
 }
 
+const learnedCaps = new Map<string, number>();
+
 export class OpenAICompatClient {
   readonly provider: AltProvider;
   readonly label: string;
@@ -45,6 +47,8 @@ export class OpenAICompatClient {
   private readonly base: string;
   private readonly apiKey: string;
   private readonly fetchFn: FetchLike;
+  /** Output caps learned from the API, per model (shared by all clients of this process). */
+  private readonly maxTokens = learnedCaps;
 
   constructor(provider: AltProvider, apiKey: string, fetchFn: FetchLike = fetch) {
     const p = ALT_PROVIDERS[provider];
@@ -86,19 +90,32 @@ export class OpenAICompatClient {
         content.push({ type: "image_url", image_url: { url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}` } });
       }
     }
-    const r = await httpJson<ChatResponse>(this.fetchFn, `${this.base}/chat/completions`, {
+    const send = (maxTokens: number) => httpJson<ChatResponse>(this.fetchFn, `${this.base}/chat/completions`, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({
         model,
         messages: [{ role: "user", content }],
         response_format: { type: "json_object" },
-        max_tokens: opts.maxOutputTokens ?? 8192,
+        max_tokens: maxTokens,
         temperature: 0.4,
       }),
       service: this.label,
       timeoutMs: opts.timeoutMs ?? 120_000,
     });
+    const wanted = opts.maxOutputTokens ?? this.maxTokens.get(model) ?? 8192;
+    let r: ChatResponse;
+    try {
+      r = await send(wanted);
+    } catch (e) {
+      // Each model has its own output cap; the error says which ("must be less than or equal to `4096`")
+      const cap = e instanceof StepError && /HTTP 400/.test(e.message) && /max_tokens/.test(e.message)
+        ? Number(/less than or equal to\D{0,3}(\d+)/.exec(e.message)?.[1])
+        : NaN;
+      if (!Number.isFinite(cap) || cap <= 0 || cap >= wanted) throw e;
+      this.maxTokens.set(model, cap);
+      r = await send(cap);
+    }
     const text = r.choices?.[0]?.message?.content ?? "";
     if (!text) throw new StepError(`${this.label} não retornou conteúdo (${r.choices?.[0]?.finish_reason ?? "?"})`, "retryable");
     let data: T;
