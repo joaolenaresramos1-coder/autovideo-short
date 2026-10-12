@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../supabase.ts";
+import { api, supabase } from "../supabase.ts";
 import { rows, useQuery, useToast } from "../hooks.ts";
 import { Card, ErrorBox, Field, fmtDate, Loading, Page, Tabs, Toast } from "../ui.tsx";
 import type { UserSettings } from "../../../supabase/functions/_shared/core/types.ts";
@@ -15,7 +15,14 @@ type S = UserSettings & {
 };
 interface Log { id: number; level: string; event: string; message: string | null; created_at: string; job_id: string | null }
 
-const VOICES = ["Kore", "Puck", "Charon", "Fenrir", "Leda", "Orus", "Aoede", "Zephyr", "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat"];
+/** Gemini TTS voices and their style (as described by Google). */
+const VOICES: [string, string][] = [
+  ["Kore", "firme"], ["Puck", "animada"], ["Charon", "informativa"], ["Fenrir", "empolgada"], ["Leda", "jovem"], ["Orus", "firme"],
+  ["Aoede", "leve"], ["Zephyr", "clara"], ["Callirrhoe", "tranquila"], ["Autonoe", "clara"], ["Enceladus", "sussurrada"], ["Iapetus", "nítida"],
+  ["Umbriel", "tranquila"], ["Algieba", "suave"], ["Despina", "suave"], ["Erinome", "nítida"], ["Algenib", "rouca"], ["Rasalgethi", "informativa"],
+  ["Laomedeia", "animada"], ["Achernar", "macia"], ["Alnilam", "firme"], ["Schedar", "equilibrada"], ["Gacrux", "madura"], ["Pulcherrima", "direta"],
+  ["Achird", "amigável"], ["Zubenelgenubi", "casual"], ["Vindemiatrix", "gentil"], ["Sadachbia", "viva"], ["Sadaltager", "experiente"], ["Sulafat", "calorosa"],
+];
 
 export default function Settings() {
   const [tab, setTab] = useState<"config" | "logs">("config");
@@ -31,12 +38,25 @@ function Config() {
   const toast = useToast();
   const q = useQuery(() => rows(supabase.from("user_settings").select("*").single()) as Promise<S>);
   const [s, setS] = useState<Partial<S>>({});
+  const [hearing, setHearing] = useState(false);
   useEffect(() => {
     if (q.data) setS(q.data);
   }, [q.data]);
   if (!q.data) return <><ErrorBox error={q.error} /><Loading /></>;
   const set = <K extends keyof S>(k: K, v: S[K]) => setS((p) => ({ ...p, [k]: v }));
   const num = (k: keyof S) => (e: React.ChangeEvent<HTMLInputElement>) => set(k, Number(e.target.value) as never);
+
+  async function hear(voice: string) {
+    setHearing(true);
+    try {
+      const r = await api<{ audio_b64: string }>("preview_voice", { voice });
+      await new Audio(`data:audio/wav;base64,${r.audio_b64}`).play();
+    } catch (err) {
+      toast.fail((err as Error).message);
+    } finally {
+      setHearing(false);
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -71,7 +91,14 @@ function Config() {
           <Field label="Modelo de fala (TTS)" hint="Precisa ser um modelo com geração de áudio, ex.: gemini-3.8-flash-lite-tts ou gemini-3.8-flash-tts. Teste em Integrações.">
             <input value={s.gemini_tts_model ?? ""} onChange={(e) => set("gemini_tts_model", e.target.value)} />
           </Field>
-          <Field label="Voz"><select value={s.gemini_voice} onChange={(e) => set("gemini_voice", e.target.value)}>{VOICES.map((v) => <option key={v}>{v}</option>)}</select></Field>
+          <Field label="Voz do narrador" hint="Ouça antes de escolher. Vale para os próximos vídeos.">
+            <div className="row">
+              <select style={{ flex: 1 }} value={s.gemini_voice} onChange={(e) => set("gemini_voice", e.target.value)}>
+                {VOICES.map(([v, tone]) => <option key={v} value={v}>{v} — {tone}</option>)}
+              </select>
+              <button type="button" disabled={hearing} onClick={() => hear(s.gemini_voice ?? "Kore")}>{hearing ? "Gerando…" : "▶ Ouvir"}</button>
+            </div>
+          </Field>
           <Field label="Modelo de imagem (ilustrações originais)"><input value={s.gemini_image_model ?? ""} onChange={(e) => set("gemini_image_model", e.target.value)} /></Field>
         </div>
       </Card>
@@ -81,6 +108,13 @@ function Config() {
             <Field label="Cor das legendas"><input type="color" value={s.caption_style?.color ?? "#FFE600"} onChange={(e) => set("caption_style", { ...s.caption_style!, color: e.target.value })} /></Field>
             <Field label="Cor de destaque"><input type="color" value={s.caption_style?.accent ?? "#7CFF4F"} onChange={(e) => set("caption_style", { ...s.caption_style!, accent: e.target.value })} /></Field>
           </div>
+          <Field label="Posição da legenda" hint="Embaixo fica acima da descrição, das hashtags e dos botões do TikTok, Reels e Shorts.">
+            <select value={s.caption_style?.position ?? "bottom"} onChange={(e) => set("caption_style", { ...s.caption_style!, position: e.target.value as "bottom" })}>
+              <option value="bottom">Embaixo (acima da descrição do TikTok)</option>
+              <option value="middle">No meio</option>
+              <option value="top">Em cima</option>
+            </select>
+          </Field>
           <label className="check"><input type="checkbox" checked={!!s.background_music} onChange={(e) => set("background_music", e.target.checked)} /> Trilha sonora de fundo (arquivo licenciado em worker/assets/music.mp3)</label>
           <label className="check"><input type="checkbox" checked={!!s.ai_disclosure} onChange={(e) => set("ai_disclosure", e.target.checked)} /> Informar conteúdo gerado por IA nas plataformas</label>
           <div className="grid two">

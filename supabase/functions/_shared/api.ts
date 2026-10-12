@@ -2,6 +2,7 @@
 // the browser never receives secrets, only short-lived signed URLs.
 
 import { StepError } from "./core/backoff.ts";
+import { bytesToBase64 } from "./core/wav.ts";
 import { MAX_UPLOAD_BYTES, UPLOAD_HINT, uploadContentType, uploadKind } from "./core/uploads.ts";
 import { randomToken, redact } from "./core/crypto.ts";
 import { chapterNumberFrom } from "./connectors/types.ts";
@@ -132,6 +133,20 @@ export async function handleApi(ctx: Ctx, userId: string, body: Body): Promise<u
         if (e instanceof ApiError) throw e;
         throw new ApiError(redact((e as Error).message), 502);
       }
+    }
+    case "preview_voice": {
+      // A short sample of a narration voice, played in the settings page.
+      const settings = await repo.getSettings(userId);
+      const voice = str(body, "voice", 40);
+      if (!/^[A-Za-z]+$/.test(voice)) throw new ApiError("Voz inválida");
+      let r;
+      try {
+        r = await (await geminiFor(ctx, userId)).synthesize(settings.gemini_tts_model, "Olá! Esta é a voz que vai narrar os seus resumos. O que você achou?", { voice });
+      } catch (e) {
+        throw new ApiError(redact((e as Error).message), 502);
+      }
+      await repo.recordUsage({ user_id: userId, job_id: null, provider: "gemini", kind: "gemini_tts", model: settings.gemini_tts_model, input_tokens: r.usage.inputTokens, output_tokens: r.usage.outputTokens, units: r.durationSeconds, unit_type: "audio_seconds", cost_usd: 0 });
+      return { voice, audio_b64: bytesToBase64(r.wav), seconds: Number(r.durationSeconds.toFixed(2)) };
     }
     case "test_gemini": {
       const settings = await repo.getSettings(userId);

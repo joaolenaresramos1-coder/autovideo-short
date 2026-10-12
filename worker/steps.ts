@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StepError } from "../supabase/functions/_shared/core/backoff.ts";
-import { buildAss, segmentRanges, timeWords } from "../supabase/functions/_shared/core/captions.ts";
+import { alignToHeard, buildAss, type HeardWord, segmentRanges, timeWords } from "../supabase/functions/_shared/core/captions.ts";
 import { illustrationPrompt } from "../supabase/functions/_shared/core/prompts.ts";
 import { estimateBeforeCall } from "../supabase/functions/_shared/core/pricing.ts";
 import { buildFfmpegArgs, planShots } from "../supabase/functions/_shared/core/render.ts";
@@ -45,6 +45,23 @@ async function pool<T, R>(items: T[], size: number, fn: (item: T, index: number)
   });
   await Promise.all(lanes);
   return out;
+}
+
+/** Words heard in the narration, with times (worker/align.py); null when unavailable. */
+export async function heardWords(audioFile: string): Promise<HeardWord[] | null> {
+  if (process.env.CAPTION_ALIGN === "off") return null;
+  const script = new URL("./align.py", import.meta.url).pathname;
+  const r = await run(process.env.PYTHON ?? "python3", [script, audioFile, process.env.ALIGN_MODEL ?? "small"], { timeoutMs: 10 * 60_000 }).catch(() => null);
+  if (!r || r.code !== 0) {
+    console.log(`alinhamento indisponível: ${r ? r.stderr.slice(-300) : "python ausente"}`);
+    return null;
+  }
+  try {
+    const words = JSON.parse(r.stdout.toString()) as HeardWord[];
+    return Array.isArray(words) && words.length > 0 ? words : null;
+  } catch {
+    return null;
+  }
 }
 
 async function jobDir(job: Job): Promise<string> {
@@ -289,7 +306,12 @@ export async function render(ctx: Ctx, job: Job): Promise<StepOutcome> {
   const narrSeconds = audio.duration / tempo;
   const speech = (await speechIntervals(audioFile, audio.duration)).map((s) => ({ start: s.start / tempo, end: s.end / tempo }));
   const D = Math.min(MAX_VIDEO_SECONDS + 0.5, Math.max(audio.video_seconds, Math.min(narrSeconds, MAX_VIDEO_SECONDS)));
-  const words = timeWords(script.segments, narrSeconds, speech);
+  // Real word timings from speech recognition of the narration; the estimate
+  // (proportional to word length, inside the detected speech) is the fallback.
+  const heard = await heardWords(audioFile);
+  const aligned = heard ? alignToHeard(script.segments, heard, tempo) : null;
+  const words = aligned ?? timeWords(script.segments, narrSeconds, speech);
+  console.log(`[rendering ${job.id}] legendas: ${aligned ? `sincronizadas pela fala (${heard!.length} palavras ouvidas)` : "tempo estimado"}`);
   const ranges = segmentRanges(words, script.segments.length, D);
   const shots = planShots(script.segments, ranges, usablePanels, D);
   const assFile = join(dir, "captions.ass");
