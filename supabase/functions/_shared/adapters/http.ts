@@ -9,6 +9,12 @@ export interface HttpOptions extends RequestInit {
   service?: string;
 }
 
+export const TIMEOUT_TEXT = "sem resposta no tempo limite";
+
+export function isTimeout(e: unknown): boolean {
+  return e instanceof StepError && e.message.includes(TIMEOUT_TEXT);
+}
+
 /** fetch with timeout; network errors become retryable StepErrors. */
 export async function http(fetchFn: FetchLike, url: string, opts: HttpOptions = {}): Promise<Response> {
   const { timeoutMs = 60_000, service = new URL(url).host, ...init } = opts;
@@ -17,6 +23,7 @@ export async function http(fetchFn: FetchLike, url: string, opts: HttpOptions = 
   try {
     return await fetchFn(url, { ...init, signal: init.signal ?? ctrl.signal });
   } catch (e) {
+    if (ctrl.signal.aborted) throw new StepError(`${service}: ${TIMEOUT_TEXT} (${Math.round(timeoutMs / 1000)} s)`, "retryable");
     const msg = e instanceof Error ? e.message : String(e);
     throw new StepError(`${service}: falha de rede (${redact(msg)})`, "retryable");
   } finally {
@@ -33,13 +40,14 @@ export async function ensureOk(res: Response, service: string): Promise<Response
   } catch {
     // ignore
   }
-  const kind = classifyHttpStatus(res.status);
   const retryAfter = Number(res.headers.get("retry-after"));
-  throw new StepError(
-    `${service}: HTTP ${res.status} ${redact(body)}`.trim(),
-    kind,
-    Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
-  );
+  const after = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined;
+  if (res.status === 503 || res.status === 429) {
+    // Service busy or rate limited: wait and try again, without spending one
+    // of the job's attempts.
+    throw new StepError(`${service} ocupado agora (HTTP ${res.status}); nova tentativa em instantes. ${redact(body)}`.trim(), "waiting", after ?? 120);
+  }
+  throw new StepError(`${service}: HTTP ${res.status} ${redact(body)}`.trim(), classifyHttpStatus(res.status), after);
 }
 
 export async function httpJson<T>(fetchFn: FetchLike, url: string, opts: HttpOptions = {}): Promise<T> {

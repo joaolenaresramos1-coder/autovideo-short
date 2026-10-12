@@ -17,7 +17,7 @@ export type StepHandler = (ctx: Ctx, job: Job) => Promise<StepOutcome>;
 /** Minimum time (ms) that must remain before starting each step. */
 export const STEP_BUDGET_MS: Partial<Record<JobState, number>> = {
   discovering: 20_000,
-  analyzing: 50_000,
+  analyzing: 90_000,
   scripting: 70_000,
   audio_generating: 100_000,
   publishing: 40_000,

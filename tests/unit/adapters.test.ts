@@ -125,9 +125,19 @@ describe("gemini client", () => {
     expect(inferCapabilities({ name: "models/embedding", supportedGenerationMethods: ["embedContent"] })).toEqual([]);
   });
 
-  it("classifies errors: 429 retryable, 401/403 configuration", async () => {
+  it("classifies errors: 429/503 wait without spending attempts, 401/403 configuration", async () => {
     const r429 = mockFetch(() => new Response("quota", { status: 429, headers: { "retry-after": "30" } }));
-    await expect(new GeminiClient("KEY", r429.f).generateJson("m", [{ text: "x" }], {})).rejects.toMatchObject({ kind: "retryable", retryAfterSeconds: 30 });
+    await expect(new GeminiClient("KEY", r429.f).generateJson("m", [{ text: "x" }], {})).rejects.toMatchObject({ kind: "waiting", retryAfterSeconds: 30 });
+    // overloaded model: quick retries inside the same call, then wait
+    let n = 0;
+    const busy = mockFetch(() => (++n < 3
+      ? new Response(JSON.stringify({ error: { code: 503, message: "This model is currently experiencing high demand." } }), { status: 503 })
+      : json({ candidates: [{ content: { parts: [{ text: "{\"ok\":1}" }] } }] })));
+    const g = new GeminiClient("KEY", busy.f);
+    g.busyRetryMs = [1, 1];
+    expect((await g.generateJson<{ ok: number }>("m", [{ text: "x" }], {})).data.ok).toBe(1);
+    n = -10;
+    await expect(g.generateJson("m", [{ text: "x" }], {})).rejects.toMatchObject({ kind: "waiting", retryAfterSeconds: 120 });
     const r403 = mockFetch(() => new Response("denied", { status: 403 }));
     await expect(new GeminiClient("KEY", r403.f).generateJson("m", [{ text: "x" }], {})).rejects.toMatchObject({ kind: "config" });
   });
@@ -254,5 +264,29 @@ describe("upload types", async () => {
     expect(uploadKind("application/x-msdownload", "virus.exe")).toBeNull();
     expect(uploadContentType("", "cap.cbz")).toBe("application/vnd.comicbook+zip");
     expect(uploadContentType("image/jpeg", "foto.jpg")).toBe("image/jpeg");
+  });
+});
+
+describe("slow Gemini", () => {
+  it("reports a timeout as such and asks for little thinking, falling back when the model rejects it", async () => {
+    const { http, isTimeout } = await import("../../supabase/functions/_shared/adapters/http.ts");
+    const hang: typeof fetch = (_u, init) => new Promise((_, rej) => init?.signal?.addEventListener("abort", () => rej(new Error("The signal has been aborted"))));
+    const err = await http(hang, "https://x.test/", { timeoutMs: 20, service: "Gemini" }).catch((e) => e);
+    expect(isTimeout(err)).toBe(true);
+    expect(err.message).toMatch(/Gemini: sem resposta no tempo limite/);
+
+    const bodies: any[] = [];
+    const { f } = mockFetch((_url, init) => {
+      const b = JSON.parse(String(init.body));
+      bodies.push(b);
+      if (b.generationConfig.thinkingConfig) return new Response(JSON.stringify({ error: { message: "Unknown name \"thinkingConfig\"" } }), { status: 400 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "{\"ok\":true}" }] } }] }), { status: 200 });
+    });
+    const g = new GeminiClient("k", f);
+    expect((await g.generateJson<{ ok: boolean }>("m", [{ text: "oi" }], {}, { quick: true })).data.ok).toBe(true);
+    expect(bodies[0].generationConfig.thinkingConfig).toEqual({ thinkingLevel: "low" });
+    expect(bodies[1].generationConfig.thinkingConfig).toBeUndefined();
+    await g.generateJson("m", [{ text: "oi" }], {}, { quick: true });
+    expect(bodies).toHaveLength(3); // remembered: no second rejected call
   });
 });
