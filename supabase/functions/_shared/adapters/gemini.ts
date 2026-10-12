@@ -74,6 +74,7 @@ function blockedOrEmpty(r: GenerateResponse): never {
 }
 
 export class GeminiClient {
+  private noThinkingConfig = false;
   apiKey: string;
   fetchFn: FetchLike;
   constructor(apiKey: string, fetchFn: FetchLike = fetch) {
@@ -111,21 +112,35 @@ export class GeminiClient {
   }
 
   private async generate(model: string, body: unknown, timeoutMs: number): Promise<GenerateResponse> {
-    return httpJson<GenerateResponse>(this.fetchFn, `${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      service: "Gemini",
-      timeoutMs,
-    });
+    const started = Date.now();
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await httpJson<GenerateResponse>(this.fetchFn, `${BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify(body),
+          service: "Gemini",
+          timeoutMs: Math.max(5_000, timeoutMs - (Date.now() - started)),
+        });
+      } catch (e) {
+        // "high demand" spikes are usually short: retry a couple of times right away
+        const wait = this.busyRetryMs[attempt];
+        const busy = e instanceof StepError && e.kind === "waiting" && /HTTP 503/.test(e.message);
+        if (!busy || wait === undefined || Date.now() - started + wait + 20_000 > timeoutMs) throw e;
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
   }
+
+  /** Waits between quick retries when the model is overloaded (tests set []). */
+  busyRetryMs: number[] = [3_000, 8_000];
 
   /** Structured JSON output validated against `schema`. */
   async generateJson<T>(
     model: string,
     parts: Part[],
     schema: unknown,
-    opts: { system?: string; maxOutputTokens?: number; timeoutMs?: number } = {},
+    opts: { system?: string; maxOutputTokens?: number; timeoutMs?: number; quick?: boolean } = {},
   ): Promise<{ data: T; usage: GeminiUsage; modelVersion?: string }> {
     const base = {
       contents: [{ role: "user", parts }],
@@ -133,19 +148,25 @@ export class GeminiClient {
     };
     const timeout = opts.timeoutMs ?? 120_000;
     const maxOutputTokens = opts.maxOutputTokens ?? 16384;
+    // quick: little "thinking" — reading panels does not need long reasoning
+    let thinking: Record<string, unknown> = opts.quick && !this.noThinkingConfig ? { thinkingConfig: { thinkingLevel: "low" } } : {};
+    const call = async (format: Record<string, unknown>) => {
+      try {
+        return await this.generate(model, { ...base, generationConfig: { ...format, maxOutputTokens, ...thinking } }, timeout);
+      } catch (e) {
+        if (!Object.keys(thinking).length || !(e instanceof StepError) || !/HTTP 400/.test(e.message) || !/thinking/i.test(e.message)) throw e;
+        this.noThinkingConfig = true; // model without thinking levels
+        thinking = {};
+        return await this.generate(model, { ...base, generationConfig: { ...format, maxOutputTokens } }, timeout);
+      }
+    };
     let r: GenerateResponse;
     try {
       // Current field (responseSchema/responseJsonSchema are deprecated).
-      r = await this.generate(model, {
-        ...base,
-        generationConfig: { responseFormat: { text: { mimeType: "APPLICATION_JSON", schema } }, maxOutputTokens },
-      }, timeout);
+      r = await call({ responseFormat: { text: { mimeType: "APPLICATION_JSON", schema } } });
     } catch (e) {
       if (!(e instanceof StepError) || !/HTTP 400/.test(e.message) || !/responseFormat|response_format|Unknown name/i.test(e.message)) throw e;
-      r = await this.generate(model, {
-        ...base,
-        generationConfig: { responseMimeType: "application/json", responseJsonSchema: schema, maxOutputTokens },
-      }, timeout);
+      r = await call({ responseMimeType: "application/json", responseJsonSchema: schema });
     }
     const text = (r.candidates?.[0]?.content?.parts ?? [])
       .filter((p) => typeof p.text === "string" && !p.thought)

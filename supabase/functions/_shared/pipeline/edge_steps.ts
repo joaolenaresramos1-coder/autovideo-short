@@ -1,6 +1,7 @@
 // Steps executed inside Edge Functions: short, network-bound and resumable.
 
 import { StepError } from "../core/backoff.ts";
+import { isTimeout } from "../adapters/http.ts";
 import { type MemoryUpdate, memoryContext, mergeMemory } from "../core/memory.ts";
 import { estimateBeforeCall } from "../core/pricing.ts";
 import {
@@ -44,6 +45,8 @@ interface AnalysisState {
   next: number;
   batches: AnalysisBatch[];
   textDone?: boolean;
+  /** images per call; halves when Gemini takes too long */
+  size?: number;
 }
 
 export interface ChapterAnalysis {
@@ -52,7 +55,7 @@ export interface ChapterAnalysis {
   summaries: string[];
 }
 
-const BATCH = 8;
+const BATCH = 6;
 
 async function load(ctx: Ctx, job: Job): Promise<{ work: Work; settings: UserSettings; chapter: Chapter | null }> {
   const work = await ctx.repo.getWork(job.work_id);
@@ -171,10 +174,11 @@ export async function analyze(ctx: Ctx, job: Job): Promise<StepOutcome> {
 
   const panels = fetched.panels;
   while (state.next < panels.length) {
-    if (remainingMs(ctx) < 45_000) {
+    if (remainingMs(ctx) < 85_000) {
       return { stay: true, output: state, reason: `Análise parcial: ${state.next}/${panels.length} imagens` };
     }
-    const batch = panels.slice(state.next, state.next + BATCH);
+    const size = state.size ?? BATCH;
+    const batch = panels.slice(state.next, state.next + size);
     const parts: Part[] = [{
       text: analysisPrompt({
         workTitle: work.title,
@@ -190,7 +194,15 @@ export async function analyze(ctx: Ctx, job: Job): Promise<StepOutcome> {
       parts.push(imagePart(await ctx.blobs.get(p.path), "image/jpeg"));
     }
     await ensureAllowed(ctx, job, "gemini_text", estimateBeforeCall("gemini_text", model, { images: batch.length, inputChars: 4000 }, settings.gemini_tier, settings.price_overrides));
-    const r = await gemini.generateJson<AnalysisBatch>(model, parts, ANALYSIS_SCHEMA, { timeoutMs: Math.min(100_000, remainingMs(ctx) - 5_000) });
+    let r;
+    try {
+      r = await gemini.generateJson<AnalysisBatch>(model, parts, ANALYSIS_SCHEMA, { timeoutMs: Math.min(110_000, remainingMs(ctx) - 5_000), quick: true });
+    } catch (e) {
+      if (!isTimeout(e) || size <= 1) throw e;
+      // Gemini took too long for this many images: try again soon with fewer
+      state.size = Math.max(1, Math.floor(size / 2));
+      return { stay: true, delaySeconds: 5, output: state, reason: `Gemini demorou; analisando ${state.size} imagem(ns) por vez` };
+    }
     await trackGemini(ctx, job, settings, "gemini_text", model, r.usage, false, { images: 0 });
     const known = new Set(batch.map((p) => p.id));
     state.batches.push({
