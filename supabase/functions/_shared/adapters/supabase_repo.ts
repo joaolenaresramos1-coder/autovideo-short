@@ -117,6 +117,10 @@ export class SupabaseRepo implements Repo {
     if (s) return s as UserSettings;
     return must(await this.db.from("user_settings").insert({ user_id: userId }).select("*").single(), "user_settings") as UserSettings;
   }
+  async updateSettings(userId: string, patch: Record<string, unknown>) {
+    await this.getSettings(userId); // creates the row when missing
+    must(await this.db.from("user_settings").update(patch).eq("user_id", userId), "user_settings");
+  }
   async activeSchedules() {
     return must(await this.db.from("schedules").select("*").eq("active", true), "schedules") as Schedule[];
   }

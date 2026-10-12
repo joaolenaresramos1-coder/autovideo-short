@@ -61,6 +61,57 @@ export function createFakeFetch(opts: FakeOptions = {}) {
   /** Extra routes registered by a test: exact URL -> response factory. */
   const routes = new Map<string, (init: RequestInit) => Response>();
 
+  /** Toggles for failure scenarios. */
+  const control = { geminiTextDown: false };
+
+  const answer = (required: string[], allText: string, prefix: string): unknown => {
+    let out: unknown;
+    if (required.includes("batch_summary")) {
+      hit(`${prefix}_analysis`);
+      const ids = [...allText.matchAll(/Painel ([\w-]+):/g)].map((m) => m[1]);
+      out = {
+        panels: ids.map((id, i) => ({
+          id,
+          scene: `Cena ${i + 1}: o herdeiro encara o conselho`,
+          characters: ["Ivan"],
+          dialogues: [{ speaker: "Ivan", text: "I will never abandon my family no matter what happens tonight", meaning: "Ele promete proteger a família" }],
+          usable: true,
+        })),
+        events: [{ description: "Ivan descobre o segredo da promessa", certainty: "confirmed", panels: ids.slice(0, 2) }],
+        batch_summary: "Ivan enfrenta o conselho.",
+      };
+    } else if (required.includes("memory_updates")) {
+      hit(`${prefix}_script`);
+      const ids = (/Identificadores disponíveis: ([^\n]+)\./.exec(allText)?.[1] ?? "").split(", ").filter((x) => x && !x.startsWith("("));
+      const target = opts.scriptWords ?? Number(/cerca de (\d+) palavras/.exec(allText)?.[1] ?? 180);
+      const segs = 12;
+      const per = Math.max(4, Math.round(target / segs));
+      out = {
+        title: "O segredo da promessa — resumo",
+        description: "Resumo do capítulo com narração original.",
+        hashtags: ["manhwa", "resumo"],
+        hook: "Ninguém esperava essa revelação.",
+        segments: Array.from({ length: segs }, (_, i) => ({
+          text: sentence(per, i),
+          panels: ids.length ? [ids[i % ids.length]] : [],
+          emphasis: [WORDS[(i * 7) % WORDS.length]],
+        })),
+        key_points: { conflicts: ["Ivan contra o conselho"], revelations: ["A promessa esconde um segredo"], consequences: ["Ivan perde aliados"] },
+        chapter_summary: "Ivan descobre o segredo da promessa e enfrenta o conselho.",
+        memory_updates: [
+          { kind: "character", name: "Ivan", content: "Herdeiro protagonista", certainty: "confirmed" },
+          { kind: "event", name: "Promessa", content: "Pode ter sido feita pelo tio", certainty: "theory" },
+        ],
+      };
+    } else if (required.includes("consistent")) {
+      hit(`${prefix}_review`);
+      out = { consistent: true, issues: [] };
+    } else {
+      out = {};
+    }
+    return out;
+  };
+
   const fetchFn = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const method = (init.method ?? "GET").toUpperCase();
@@ -120,54 +171,34 @@ export function createFakeFetch(opts: FakeOptions = {}) {
         hit("gemini_image");
         return json({ error: { message: "not in fake" } }, 400);
       }
+      if (control.geminiTextDown) {
+        hit("gemini_quota");
+        return json({ error: { code: 429, message: "You exceeded your current quota. Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\nPlease retry in 20h59m43.9s.", status: "RESOURCE_EXHAUSTED" } }, 429);
+      }
       const schema = cfg.responseFormat?.text?.schema ?? cfg.responseJsonSchema;
       const required: string[] = schema?.required ?? [];
       const allText = (body.contents[0].parts as { text?: string }[]).map((p) => p.text ?? "").join("\n");
-      let out: unknown;
-      if (required.includes("batch_summary")) {
-        hit("gemini_analysis");
-        const ids = [...allText.matchAll(/Painel ([\w-]+):/g)].map((m) => m[1]);
-        out = {
-          panels: ids.map((id, i) => ({
-            id,
-            scene: `Cena ${i + 1}: o herdeiro encara o conselho`,
-            characters: ["Ivan"],
-            dialogues: [{ speaker: "Ivan", text: "I will never abandon my family no matter what happens tonight", meaning: "Ele promete proteger a família" }],
-            usable: true,
-          })),
-          events: [{ description: "Ivan descobre o segredo da promessa", certainty: "confirmed", panels: ids.slice(0, 2) }],
-          batch_summary: "Ivan enfrenta o conselho.",
-        };
-      } else if (required.includes("memory_updates")) {
-        hit("gemini_script");
-        const ids = (/Identificadores disponíveis: ([^\n]+)\./.exec(allText)?.[1] ?? "").split(", ").filter((x) => x && !x.startsWith("("));
-        const target = opts.scriptWords ?? Number(/cerca de (\d+) palavras/.exec(allText)?.[1] ?? 180);
-        const segs = 12;
-        const per = Math.max(4, Math.round(target / segs));
-        out = {
-          title: "O segredo da promessa — resumo",
-          description: "Resumo do capítulo com narração original.",
-          hashtags: ["manhwa", "resumo"],
-          hook: "Ninguém esperava essa revelação.",
-          segments: Array.from({ length: segs }, (_, i) => ({
-            text: sentence(per, i),
-            panels: ids.length ? [ids[i % ids.length]] : [],
-            emphasis: [WORDS[(i * 7) % WORDS.length]],
-          })),
-          key_points: { conflicts: ["Ivan contra o conselho"], revelations: ["A promessa esconde um segredo"], consequences: ["Ivan perde aliados"] },
-          chapter_summary: "Ivan descobre o segredo da promessa e enfrenta o conselho.",
-          memory_updates: [
-            { kind: "character", name: "Ivan", content: "Herdeiro protagonista", certainty: "confirmed" },
-            { kind: "event", name: "Promessa", content: "Pode ter sido feita pelo tio", certainty: "theory" },
-          ],
-        };
-      } else if (required.includes("consistent")) {
-        hit("gemini_review");
-        out = { consistent: true, issues: [] };
-      } else {
-        out = {};
-      }
+      const out = answer(required, allText, "gemini");
       return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(out) }] } }], usageMetadata, modelVersion: "fake" });
+    }
+
+    // ---- Groq (OpenAI-compatible)
+    if (url.startsWith("https://api.groq.com/openai/v1/")) {
+      if (headers.get("authorization") !== "Bearer test-groq-key") return json({ error: { message: "Invalid API Key" } }, 401);
+      if (url.endsWith("/models")) {
+        hit("groq_models");
+        return json({ data: [{ id: "llama-3.3-70b-versatile", active: true }, { id: "meta-llama/llama-4-scout-17b-16e-instruct", active: true }] });
+      }
+      const content = body.messages[0].content as { type: string; text?: string }[];
+      const images = content.filter((c) => c.type === "image_url").length;
+      if (images > 5) return json({ error: { message: "Too many images provided. This model supports up to 5 images" } }, 400);
+      if (body.response_format?.type !== "json_object") return json({ error: { message: "expected json_object" } }, 400);
+      const allText = content.map((c) => c.text ?? "").join("\n");
+      const schemaText = /JSON Schema:\n(\{[\s\S]*\})\s*$/.exec(content[0].text ?? "")?.[1] ?? "{}";
+      const required: string[] = JSON.parse(schemaText).required ?? [];
+      hit("groq_chat");
+      const out = answer(required, allText, "groq");
+      return json({ choices: [{ message: { content: "```json\n" + JSON.stringify(out) + "\n```" }, finish_reason: "stop" }], usage: { prompt_tokens: 900, completion_tokens: 400, total_tokens: 1300 }, model: body.model });
     }
 
     // ---- YouTube
@@ -221,5 +252,5 @@ export function createFakeFetch(opts: FakeOptions = {}) {
     }
     return new Response(`fake: rota não mapeada ${method} ${url}`, { status: 404 });
   };
-  return { fetchFn, stats, routes };
+  return { fetchFn, stats, routes, control };
 }

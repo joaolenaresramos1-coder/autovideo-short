@@ -290,3 +290,38 @@ describe("slow Gemini", () => {
     expect(bodies).toHaveLength(3); // remembered: no second rejected call
   });
 });
+
+describe("Groq and quotas", () => {
+  it("reads how long a quota lasts from the error body", async () => {
+    const { retryDelayFrom, formatWait } = await import("../../supabase/functions/_shared/adapters/http.ts");
+    expect(retryDelayFrom("Quota exceeded … Please retry in 20h59m43.907824375s.")).toBe(75584);
+    expect(retryDelayFrom(`{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay": "42s"}`)).toBe(42);
+    expect(retryDelayFrom("Rate limit reached. Please try again in 7m12.5s.")).toBe(433);
+    expect(retryDelayFrom("nothing here")).toBeUndefined();
+    expect(formatWait(75584)).toBe("20 h 60 min");
+    const daily = mockFetch(() => new Response(`{"error":{"code":429,"message":"Please retry in 20h59m43.9s."}}`, { status: 429 }));
+    await expect(new GeminiClient("K", daily.f).generateJson("m", [{ text: "x" }], {})).rejects.toMatchObject({
+      kind: "waiting", retryAfterSeconds: 75584, message: expect.stringMatching(/cota grátis esgotada.*libera em ~20 h 60 min/),
+    });
+  });
+
+  it("Groq: images as data URLs, JSON object answer (even inside ``` fences)", async () => {
+    const { OpenAICompatClient, looksVision } = await import("../../supabase/functions/_shared/adapters/openai_compat.ts");
+    const { f, calls } = mockFetch(() => json({ choices: [{ message: { content: "```json\n{\"ok\":true}\n```" } }], usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 } }));
+    const g = new OpenAICompatClient("groq", "gsk_test", f);
+    const r = await g.generateJson<{ ok: boolean }>("meta-llama/llama-4-scout-17b-16e-instruct", [
+      { text: "Analise" }, { inlineData: { mimeType: "image/jpeg", data: "AAAA" } },
+    ], { type: "object", required: ["ok"] });
+    expect(r.data.ok).toBe(true);
+    expect(r.usage).toMatchObject({ inputTokens: 10, outputTokens: 3 });
+    expect(calls[0].url).toBe("https://api.groq.com/openai/v1/chat/completions");
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(new Headers(calls[0].init.headers).get("authorization")).toBe("Bearer gsk_test");
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[0].content[0].text).toMatch(/JSON Schema/);
+    expect(body.messages[0].content[1].image_url.url).toBe("data:image/jpeg;base64,AAAA");
+    expect(g.maxImages).toBe(5);
+    expect(looksVision("meta-llama/llama-4-scout-17b-16e-instruct")).toBe(true);
+    expect(looksVision("llama-3.3-70b-versatile")).toBe(false);
+  });
+});

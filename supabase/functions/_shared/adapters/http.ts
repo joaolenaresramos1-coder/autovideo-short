@@ -9,6 +9,21 @@ export interface HttpOptions extends RequestInit {
   service?: string;
 }
 
+/** "retryDelay": "75583s" (Google RetryInfo) or "retry in 20h59m43.9s" / "try again in 7m12s" in an error body. */
+export function retryDelayFrom(body: string): number | undefined {
+  const rd = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(body);
+  if (rd) return Math.ceil(Number(rd[1]));
+  const m = /(?:retry|try again) in\s+(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?/i.exec(body);
+  if (!m || (!m[1] && !m[2] && !m[3])) return undefined;
+  return Math.ceil(Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0));
+}
+
+export function formatWait(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+
 export const TIMEOUT_TEXT = "sem resposta no tempo limite";
 
 export function isTimeout(e: unknown): boolean {
@@ -36,7 +51,7 @@ export async function ensureOk(res: Response, service: string): Promise<Response
   if (res.ok) return res;
   let body = "";
   try {
-    body = (await res.text()).slice(0, 800);
+    body = (await res.text()).slice(0, 2000);
   } catch {
     // ignore
   }
@@ -44,8 +59,12 @@ export async function ensureOk(res: Response, service: string): Promise<Response
   const after = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined;
   if (res.status === 503 || res.status === 429) {
     // Service busy or rate limited: wait and try again, without spending one
-    // of the job's attempts.
-    throw new StepError(`${service} ocupado agora (HTTP ${res.status}); nova tentativa em instantes. ${redact(body)}`.trim(), "waiting", after ?? 120);
+    // of the job's attempts. A daily quota says how long to wait.
+    const wait = after ?? retryDelayFrom(body) ?? 120;
+    const msg = wait > 900
+      ? `${service}: cota grátis esgotada (HTTP ${res.status}); libera em ~${formatWait(wait)}. ${redact(body)}`
+      : `${service} ocupado agora (HTTP ${res.status}); nova tentativa em instantes. ${redact(body)}`;
+    throw new StepError(msg.trim(), "waiting", wait);
   }
   throw new StepError(`${service}: HTTP ${res.status} ${redact(body)}`.trim(), classifyHttpStatus(res.status), after);
 }
