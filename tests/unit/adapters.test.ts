@@ -321,6 +321,21 @@ describe("Groq and quotas", () => {
     expect(body.messages[0].content[0].text).toMatch(/JSON Schema/);
     expect(body.messages[0].content[1].image_url.url).toBe("data:image/jpeg;base64,AAAA");
     expect(g.maxImages).toBe(5);
+
+    // the model's own output cap, learned from the 400 and remembered
+    const sent: number[] = [];
+    const capped = mockFetch((_u, init) => {
+      const b = JSON.parse(String(init.body));
+      sent.push(b.max_tokens);
+      if (b.max_tokens > 4096) {
+        return new Response(JSON.stringify({ error: { message: "`max_tokens` must be less than or equal to `4096`, the maximum value for `max_tokens` is less than the `context_window` for this model" } }), { status: 400 });
+      }
+      return json({ choices: [{ message: { content: "{\"ok\":true}" } }] });
+    });
+    const g2 = new OpenAICompatClient("groq", "gsk_test", capped.f);
+    await g2.generateJson("cap-test-model", [{ text: "x" }], {});
+    await g2.generateJson("cap-test-model", [{ text: "x" }], {});
+    expect(sent).toEqual([8192, 4096, 4096]);
     expect(looksVision("meta-llama/llama-4-scout-17b-16e-instruct")).toBe(true);
     expect(looksVision("llama-3.3-70b-versatile")).toBe(false);
   });
