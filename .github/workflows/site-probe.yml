@@ -1,0 +1,30 @@
+# Diagnostic: can the worker read this site? (plain HTTP and a real Chrome)
+name: Testar site
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Link da obra ou do capítulo
+        required: true
+  push:
+    branches: [claude/elegant-lamport-pgkoae]
+    paths: [.github/workflows/site-probe.yml, worker/probe.ts]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: Testar
+        env:
+          URL: ${{ inputs.url || 'https://manhuaus.com/manga/the-howling-plague/' }}
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          node worker/probe.ts "$URL" || true
+          echo "--- com tela virtual (Xvfb) ---"
+          xvfb-run -a node worker/probe.ts "$URL" || true
